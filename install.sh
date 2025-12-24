@@ -263,29 +263,30 @@ install_python() {
     source /opt/youtube-venv/bin/activate
     
    
-   #    # Instalar bibliotecas Python - SOLUÇÃO PARA NUMPY NO PYTHON 3.10
-    pip3 install --upgrade pip
-    
-    # 1. PRIMEIRO: Instalar NumPy com binários pré-compilados (sem compilar)
-    pip3 install --only-binary=numpy 'numpy==1.21.6'
-    
-    # 2. DEPOIS: Instalar o resto das bibliotecas
-    pip3 install \
-        yt-dlp \
-        spleeter \
-        tensorflow \
-        pydub \
-        mutagen \
-        redis \
-        'celery>=5.3.0' \
-        pika \
-        flask \
-        requests \
-        scipy
-    
-    deactivate
-    success "Python e dependências instaladas"
-    success "Python e dependências instaladas"
+ # Atualizar pip e ferramentas
+pip install --upgrade pip setuptools wheel
+
+# Instalar NumPy compatível primeiro
+pip install "numpy<2.0"
+
+# Instalar SciPy compatível
+pip install "scipy<1.12"
+
+# Instalar TensorFlow compatível
+pip install "tensorflow<2.16"
+
+# Demais dependências
+pip install \
+    yt-dlp \
+    spleeter \
+    pydub \
+    mutagen \
+    redis \
+    celery \
+    pika \
+    flask \
+    requests
+
 }
 
 # Instalar Node.js (opcional)
