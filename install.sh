@@ -26,18 +26,36 @@ echo "📦 Atualizando sistema..."
 apt update && apt upgrade -y
 
 # -------------------------------
+# ADICIONA REPOSITÓRIO PHP 8.1 (SE NECESSÁRIO)
+# -------------------------------
+echo "🐘 Adicionando repositório PHP..."
+add-apt-repository -y ppa:ondrej/php
+apt update
+
+# -------------------------------
 # DEPENDÊNCIAS PRINCIPAIS
 # -------------------------------
 echo "📦 Instalando dependências principais..."
 apt install -y \
 nginx \
 mariadb-server mariadb-client \
-php php-fpm php-mysql php-cli php-curl php-zip php-mbstring php-xml php-gd \
+php8.1 php8.1-fpm php8.1-mysql php8.1-cli php8.1-curl php8.1-zip \
+php8.1-mbstring php8.1-xml php8.1-gd php8.1-bcmath \
 python3 python3-pip python3-venv \
 ffmpeg \
 curl unzip git software-properties-common \
 ufw \
 certbot python3-certbot-nginx
+
+# -------------------------------
+# DETECTA VERSÃO DO PHP INSTALADA
+# -------------------------------
+PHP_VERSION=$(php --version | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
+echo "✅ PHP $PHP_VERSION detectado"
+
+PHP_FPM_SERVICE="php$PHP_VERSION-fpm"
+PHP_CONF_DIR="/etc/php/$PHP_VERSION/fpm"
+PHP_CONF_FILE="$PHP_CONF_DIR/php.ini"
 
 # -------------------------------
 # CONFIGURA FIREWALL (UFW)
@@ -219,9 +237,9 @@ server {
         try_files \$uri \$uri/ /index.php?\$query_string;
     }
 
-    location ~ \.php$ {
+    location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+        fastcgi_pass unix:/run/php/php${PHP_VERSION}-fpm.sock;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
         include fastcgi_params;
     }
@@ -230,7 +248,7 @@ server {
         deny all;
     }
 
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
         try_files \$uri =404;
@@ -247,16 +265,39 @@ ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
 nginx -t
 
 # -------------------------------
-# CONFIGURA PHP-FPM
+# CONFIGURA PHP-FPM (COM VERIFICAÇÃO)
 # -------------------------------
 echo "⚙️  Otimizando PHP-FPM..."
-PHP_CONF="/etc/php/8.1/fpm/php.ini"
-sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' $PHP_CONF
-sed -i 's/^post_max_size = .*/post_max_size = 50M/' $PHP_CONF
-sed -i 's/^max_execution_time = .*/max_execution_time = 300/' $PHP_CONF
-sed -i 's/^memory_limit = .*/memory_limit = 256M/' $PHP_CONF
 
-systemctl restart php8.1-fpm
+if [ -f "$PHP_CONF_FILE" ]; then
+    sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' "$PHP_CONF_FILE"
+    sed -i 's/^post_max_size = .*/post_max_size = 50M/' "$PHP_CONF_FILE"
+    sed -i 's/^max_execution_time = .*/max_execution_time = 300/' "$PHP_CONF_FILE"
+    sed -i 's/^memory_limit = .*/memory_limit = 256M/' "$PHP_CONF_FILE"
+    
+    # Ajusta também o php.ini do CLI
+    CLI_CONF="/etc/php/$PHP_VERSION/cli/php.ini"
+    if [ -f "$CLI_CONF" ]; then
+        sed -i 's/^max_execution_time = .*/max_execution_time = 300/' "$CLI_CONF"
+        sed -i 's/^memory_limit = .*/memory_limit = 512M/' "$CLI_CONF"
+    fi
+    
+    echo "✅ Configuração PHP aplicada!"
+else
+    echo "⚠️  Aviso: $PHP_CONF_FILE não encontrado"
+    echo "⚠️  Verificando arquivos PHP disponíveis..."
+    ls -la /etc/php/*/fpm/php.ini 2>/dev/null || echo "Nenhum php.ini encontrado"
+fi
+
+# Reinicia PHP-FPM
+if systemctl is-active --quiet "$PHP_FPM_SERVICE"; then
+    systemctl restart "$PHP_FPM_SERVICE"
+    echo "✅ $PHP_FPM_SERVICE reiniciado"
+else
+    echo "⚠️  Tentando iniciar $PHP_FPM_SERVICE..."
+    systemctl start "$PHP_FPM_SERVICE"
+    systemctl enable "$PHP_FPM_SERVICE"
+fi
 
 # -------------------------------
 # SSL LETS ENCRYPT
@@ -296,7 +337,7 @@ cat <<EOF > /etc/logrotate.d/audio-extractor
     create 640 www-data www-data
     sharedscripts
     postrotate
-        systemctl reload php8.1-fpm > /dev/null 2>&1 || true
+        systemctl reload $PHP_FPM_SERVICE > /dev/null 2>&1 || true
     endscript
 }
 EOF
@@ -304,15 +345,15 @@ EOF
 # -------------------------------
 # SCRIPT DE MONITORAMENTO
 # -------------------------------
-cat <<'EOF' > /usr/local/bin/monitor-audio-extractor
+cat <<EOF > /usr/local/bin/monitor-audio-extractor
 #!/bin/bash
 echo "=== MONITORAMENTO AUDIO EXTRACTOR ==="
-echo "Data: $(date)"
+echo "Data: \$(date)"
 echo ""
 echo "📦 Serviços:"
-systemctl is-active nginx mariadb php8.1-fpm | grep -E "active|failed" | while read service; do
-    echo "  $service"
-done
+echo "  Nginx: \$(systemctl is-active nginx)"
+echo "  MariaDB: \$(systemctl is-active mariadb)"
+echo "  PHP-FPM: \$(systemctl is-active $PHP_FPM_SERVICE)"
 echo ""
 echo "💾 Espaço em disco:"
 df -h /var/www
@@ -322,16 +363,46 @@ mysql -u $DB_USER -p$DB_PASS -e "SELECT COUNT(*) as total_users FROM users; SELE
 echo ""
 echo "📊 Downloads recentes:"
 find /var/www/*/uploads -name "*.mp3" -type f 2>/dev/null | wc -l | xargs echo "  Arquivos MP3:"
+echo ""
+echo "📈 Uso de memória:"
+free -h | grep -E "^Mem:|^Swap:"
 EOF
 
 chmod +x /usr/local/bin/monitor-audio-extractor
+
+# -------------------------------
+# SCRIPT DE BACKUP
+# -------------------------------
+cat <<EOF > /usr/local/bin/backup-audio-extractor
+#!/bin/bash
+BACKUP_DIR="/backup/audio-extractor"
+mkdir -p \$BACKUP_DIR
+DATE=\$(date +%Y%m%d_%H%M%S)
+
+# Backup do banco
+mysqldump -u $DB_USER -p$DB_PASS $DB_NAME > \$BACKUP_DIR/db_backup_\$DATE.sql
+gzip \$BACKUP_DIR/db_backup_\$DATE.sql
+
+# Backup dos uploads
+tar -czf \$BACKUP_DIR/uploads_backup_\$DATE.tar.gz $PROJECT_DIR/uploads
+
+# Backup do código
+tar -czf \$BACKUP_DIR/code_backup_\$DATE.tar.gz $PROJECT_DIR --exclude="uploads" --exclude="cache"
+
+echo "✅ Backup criado em \$BACKUP_DIR"
+echo "  - Banco: db_backup_\$DATE.sql.gz"
+echo "  - Uploads: uploads_backup_\$DATE.tar.gz"
+echo "  - Código: code_backup_\$DATE.tar.gz"
+EOF
+
+chmod +x /usr/local/bin/backup-audio-extractor
 
 # -------------------------------
 # REINICIA SERVIÇOS
 # -------------------------------
 echo "🔄 Reiniciando serviços..."
 systemctl restart nginx
-systemctl restart php8.1-fpm
+systemctl restart "$PHP_FPM_SERVICE"
 systemctl restart mariadb
 
 # -------------------------------
@@ -340,7 +411,7 @@ systemctl restart mariadb
 echo "🧪 Realizando testes do sistema..."
 
 # Testa Python
-if /opt/audio_extractor/venv/bin/python3 -c "import yt_dlp, pydub, moviepy; print('✅ Python OK')"; then
+if /opt/audio_extractor/venv/bin/python3 -c "import yt_dlp, pydub, moviepy; print('✅ Python OK')" >/dev/null 2>&1; then
     echo "✅ Python dependências OK"
 else
     echo "⚠️  Problema com dependências Python"
@@ -358,6 +429,13 @@ if curl -s -I http://localhost | grep -q "200\|301"; then
     echo "✅ Nginx respondendo"
 else
     echo "⚠️  Nginx pode não estar respondendo"
+fi
+
+# Testa PHP
+if php --version >/dev/null 2>&1; then
+    echo "✅ PHP $PHP_VERSION funcionando"
+else
+    echo "❌ ERRO: PHP não está funcionando"
 fi
 
 # -------------------------------
@@ -380,17 +458,20 @@ echo "   Projeto: $PROJECT_DIR"
 echo "   Uploads: $PROJECT_DIR/uploads"
 echo "   Python: /opt/audio_extractor/venv/"
 echo "   Logs: /var/log/audio-extractor/"
+echo "   Backups: /backup/audio-extractor/"
 echo ""
 echo "⚙️  COMANDOS ÚTEIS:"
 echo "   Monitorar: monitor-audio-extractor"
-echo "   Reiniciar tudo: systemctl restart nginx mariadb php8.1-fpm"
+echo "   Backup: backup-audio-extractor"
+echo "   Reiniciar tudo: systemctl restart nginx mariadb $PHP_FPM_SERVICE"
 echo "   Ver logs: tail -f /var/log/audio-extractor/app.log"
 echo "   Ambiente Python: source /opt/audio_extractor/venv/bin/activate"
 echo ""
 echo "🔒 PRÓXIMOS PASSOS RECOMENDADOS:"
 echo "   1. Acesse https://$DOMAIN"
 echo "   2. Crie um usuário administrador"
-echo "   3. Configure backups automáticos"
+echo "   3. Configure backup automático no cron"
 echo "   4. Monitore os logs regularmente"
+echo "   5. Teste o download de um vídeo"
 echo ""
 echo "============================================"
