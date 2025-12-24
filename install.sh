@@ -1,76 +1,134 @@
 #!/bin/bash
 # YouTube Audio Extractor - Instalador Ultra Simples
-# Versão: 4.0.0
+# Versão: 4.0.0 - COM ESTILO MODERNO
 
 set -e
 
 # ============================================================================
-# CONFIGURAÇÕES (FIXAS - SEU SISTEMA)
+# CONFIGURAÇÕES DE CORES
 # ============================================================================
-DOMAIN="audioextractor.giize.com"
-EMAIL="mpnascimento031@gmail.com"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# ============================================================================
+# FUNÇÕES DE ESTILO
+# ============================================================================
+log() { echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[AVISO]${NC} $1"; }
+error() { echo -e "${RED}[ERRO]${NC} $1"; }
+success() { echo -e "${GREEN}[✓]${NC} $1"; }
+step() { echo -e "${CYAN}[$1]${NC} $2"; }
+
+# ============================================================================
+# BANNER INICIAL
+# ============================================================================
+clear
+echo -e "${CYAN}"
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║                                                          ║"
+echo "║     🎵 YOUTUBE AUDIO EXTRACTOR - INSTALADOR              ║"
+echo "║                     Versão 4.0.0                         ║"
+echo "║                                                          ║"
+echo "╚══════════════════════════════════════════════════════════╝"
+echo -e "${NC}"
+echo ""
+
+# ============================================================================
+# SOLICITAR INFORMAÇÕES DO USUÁRIO
+# ============================================================================
+echo "📋 POR FAVOR, INFORME OS DADOS PARA INSTALAÇÃO:"
+echo ""
+
+# Solicitar domínio
+while true; do
+    read -p "🌐 Digite o domínio (ex: audioextractor.giize.com): " DOMAIN
+    if [ -n "$DOMAIN" ]; then
+        break
+    else
+        warn "O domínio não pode ser vazio!"
+    fi
+done
+
+# Solicitar email
+while true; do
+    read -p "📧 Digite o email do administrador: " EMAIL
+    if [[ "$EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        break
+    else
+        warn "Email inválido! Use o formato: usuario@dominio.com"
+    fi
+done
+
+# ============================================================================
+# CONFIGURAÇÕES DO SISTEMA (FIXAS)
+# ============================================================================
 INSTALL_DIR="/var/www/audioextractor"
 DB_NAME="youtube_extractor"
 DB_USER="audioextrac_usr"
 DB_PASS="3GqG!%Yg7i;YsI4Y"
 
 # ============================================================================
-# FUNÇÕES SIMPLES
+# CONFIRMAÇÃO DA INSTALAÇÃO
 # ============================================================================
-green() { echo -e "\033[1;32m$1\033[0m"; }
-blue() { echo -e "\033[1;34m$1\033[0m"; }
-yellow() { echo -e "\033[1;33m$1\033[0m"; }
-red() { echo -e "\033[1;31m$1\033[0m"; }
+echo ""
+echo "📊 RESUMO DA INSTALAÇÃO:"
+echo "══════════════════════════════════════════════"
+echo "🌐 Domínio:          $DOMAIN"
+echo "📧 Email Admin:      $EMAIL"
+echo "📁 Diretório:        $INSTALL_DIR"
+echo "🗄️  Banco de Dados:  $DB_NAME"
+echo ""
+echo "🔧 Este instalador vai:"
+echo "   1. Instalar Apache, MySQL, PHP, Python"
+echo "   2. Criar banco de dados"
+echo "   3. Configurar site em $INSTALL_DIR"
+echo "   4. Configurar domínio $DOMAIN"
+echo "══════════════════════════════════════════════"
+echo ""
+
+read -p "⏯️  Pressione Enter para continuar ou Ctrl+C para cancelar..."
 
 # ============================================================================
 # INSTALAÇÃO PRINCIPAL
 # ============================================================================
-clear
-echo "================================================"
-echo "    YOUTUBE AUDIO EXTRACTOR - INSTALADOR"
-echo "================================================"
-echo ""
-echo "Este instalador vai:"
-echo "1. Instalar Apache, MySQL, PHP, Python"
-echo "2. Criar banco de dados: $DB_NAME"
-echo "3. Configurar site em: $INSTALL_DIR"
-echo "4. Configurar domínio: $DOMAIN"
-echo ""
-read -p "Pressione Enter para continuar ou Ctrl+C para cancelar..."
 
-# ============================================================================
 # PASSO 1: INSTALAR PACOTES
-# ============================================================================
-blue "\n[1/6] Instalando pacotes básicos..."
-apt update
+step "1/6" "Instalando pacotes básicos..."
+apt update > /dev/null 2>&1
 apt install -y apache2 mariadb-server mariadb-client \
               software-properties-common curl wget git \
-              python3 python3-pip python3-venv ffmpeg
+              python3 python3-pip python3-venv ffmpeg unzip > /dev/null 2>&1
+success "Pacotes básicos instalados"
 
 # PHP
-add-apt-repository -y ppa:ondrej/php
-apt update
+step "" "Instalando PHP 8.2..."
+add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
+apt update > /dev/null 2>&1
 apt install -y php8.2 php8.2-cli php8.2-mysql php8.2-curl \
                php8.2-gd php8.2-mbstring php8.2-xml php8.2-zip \
-               php8.2-bcmath libapache2-mod-php8.2
+               php8.2-bcmath libapache2-mod-php8.2 > /dev/null 2>&1
+success "PHP 8.2 instalado"
 
 # Ferramentas Python
-blue "\n[2/6] Instalando ferramentas Python..."
-python3 -m venv /opt/audioenv
-/opt/audioenv/bin/pip install yt-dlp pydub redis
+step "" "Instalando ferramentas Python..."
+python3 -m venv /opt/audioenv > /dev/null 2>&1
+/opt/audioenv/bin/pip install yt-dlp pydub redis > /dev/null 2>&1
+success "Ferramentas Python instaladas"
 
-# ============================================================================
 # PASSO 2: CONFIGURAR MYSQL
-# ============================================================================
-blue "\n[3/6] Configurando MySQL..."
-systemctl start mariadb
-systemctl enable mariadb
+step "2/6" "Configurando MySQL..."
+systemctl start mariadb > /dev/null 2>&1
+systemctl enable mariadb > /dev/null 2>&1
 
 echo ""
-echo "================================================"
-echo "        CONFIGURAÇÃO DO MYSQL"
-echo "================================================"
-echo ""
+info "Configuração do MySQL"
+echo "────────────────────────────────────"
 echo "Para criar o banco de dados, preciso acessar o MySQL."
 echo ""
 echo "ESCOLHA UMA OPÇÃO:"
@@ -92,17 +150,17 @@ case $mysql_option in
         MYSQL_CMD="mysql -u root -p"
         ;;
     D|d)
-        yellow "Pulando criação do banco. Crie manualmente depois."
+        warn "Pulando criação do banco. Crie manualmente depois."
         MYSQL_CMD=""
         ;;
     *)
-        red "Opção inválida. Usando 'sudo mysql' como padrão."
+        error "Opção inválida. Usando 'sudo mysql' como padrão."
         MYSQL_CMD="sudo mysql"
         ;;
 esac
 
 if [ -n "$MYSQL_CMD" ]; then
-    blue "Criando banco de dados $DB_NAME..."
+    info "Criando banco de dados $DB_NAME..."
     
     # Criar arquivo SQL temporário
     SQL_FILE="/tmp/setup_db.sql"
@@ -153,22 +211,20 @@ EOF
     
     # Executar SQL
     if $MYSQL_CMD < "$SQL_FILE" 2>/dev/null; then
-        green "✅ Banco de dados criado com sucesso!"
+        success "Banco de dados criado com sucesso!"
     else
-        yellow "⚠️  Não foi possível criar via script."
-        yellow "Crie manualmente depois:"
-        yellow "  Banco: $DB_NAME"
-        yellow "  Usuário: $DB_USER"
-        yellow "  Senha: $DB_PASS"
+        warn "Não foi possível criar via script."
+        warn "Crie manualmente depois:"
+        warn "  Banco: $DB_NAME"
+        warn "  Usuário: $DB_USER"
+        warn "  Senha: $DB_PASS"
     fi
     
     rm -f "$SQL_FILE"
 fi
 
-# ============================================================================
 # PASSO 3: CONFIGURAR APACHE
-# ============================================================================
-blue "\n[4/6] Configurando Apache..."
+step "3/6" "Configurando Apache..."
 
 # Criar diretório do site
 mkdir -p "$INSTALL_DIR"
@@ -180,10 +236,11 @@ cat > "$INSTALL_DIR/index.php" <<EOF
 <head>
     <title>YouTube Audio Extractor</title>
     <style>
-        body { font-family: Arial; margin: 40px; }
-        .box { background: #f0f0f0; padding: 20px; border-radius: 5px; margin: 20px 0; }
-        .success { color: green; }
-        .error { color: red; }
+        body { font-family: Arial; margin: 40px; background: #f5f5f5; }
+        .box { background: white; padding: 25px; border-radius: 10px; margin: 25px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        h1 { color: #343a40; }
     </style>
 </head>
 <body>
@@ -194,6 +251,7 @@ cat > "$INSTALL_DIR/index.php" <<EOF
         <p><strong>Domínio:</strong> <?php echo \$_SERVER['HTTP_HOST'] ?? '$DOMAIN'; ?></p>
         <p><strong>Diretório:</strong> <?php echo __DIR__; ?></p>
         <p><strong>Data:</strong> <?php echo date('d/m/Y H:i:s'); ?></p>
+        <p><strong>Email Admin:</strong> <?php echo '$EMAIL'; ?></p>
     </div>
     
     <div class="box">
@@ -282,87 +340,94 @@ EOF
 # Ativar site
 a2dissite 000-default.conf 2>/dev/null || true
 a2ensite audioextractor.conf
-systemctl restart apache2
+systemctl restart apache2 > /dev/null 2>&1
+success "Apache configurado para o domínio $DOMAIN"
 
-# ============================================================================
 # PASSO 4: CONFIGURAR SSL (OPCIONAL)
-# ============================================================================
-blue "\n[5/6] Configurando SSL..."
+step "4/6" "Configurando SSL..."
 echo ""
-echo "Para configurar SSL automaticamente, o DNS deve estar apontado."
+info "Para configurar SSL automaticamente, o DNS deve estar apontado."
 echo "Domínio: $DOMAIN"
-echo "IP: 45.140.193.50"
+echo "IP do servidor: 45.140.193.50"
 echo ""
-read -p "O DNS já está configurado? (s/n): " -n 1 dns_ok
+read -p "🔧 O DNS já está configurado? (s/n): " -n 1 dns_ok
 echo ""
 
 if [[ $dns_ok =~ ^[Ss]$ ]]; then
-    apt install -y certbot python3-certbot-apache
-    if certbot --apache -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL"; then
-        green "✅ SSL configurado!"
+    apt install -y certbot python3-certbot-apache > /dev/null 2>&1
+    if certbot --apache -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL" > /dev/null 2>&1; then
+        success "SSL configurado com sucesso!"
     else
-        yellow "⚠️  Falha no SSL. Configure depois:"
-        yellow "  sudo certbot --apache -d $DOMAIN"
+        warn "Falha na configuração do SSL."
+        info "Configure manualmente depois:"
+        info "  sudo certbot --apache -d $DOMAIN"
     fi
 else
-    yellow "⚠️  SSL não configurado. Configure após DNS:"
-    yellow "  sudo certbot --apache -d $DOMAIN"
+    warn "SSL não configurado (DNS não apontado)."
+    info "Configure após configurar DNS:"
+    info "  sudo certbot --apache -d $DOMAIN"
 fi
 
-# ============================================================================
 # PASSO 5: PERMISSÕES
-# ============================================================================
-blue "\n[6/6] Configurando permissões..."
-chown -R www-data:www-data "$INSTALL_DIR"
-find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
-find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
+step "5/6" "Configurando permissões..."
+chown -R www-data:www-data "$INSTALL_DIR" > /dev/null 2>&1
+find "$INSTALL_DIR" -type d -exec chmod 755 {} \; > /dev/null 2>&1
+find "$INSTALL_DIR" -type f -exec chmod 644 {} \; > /dev/null 2>&1
+success "Permissões configuradas"
+
+# PASSO 6: FINALIZAÇÃO
+step "6/6" "Finalizando instalação..."
+sleep 2
 
 # ============================================================================
 # RESUMO FINAL
 # ============================================================================
 clear
-green "================================================"
-green "    ✅ INSTALAÇÃO CONCLUÍDA!"
-green "================================================"
+echo -e "${GREEN}"
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║                                                          ║"
+echo "║          ✅ INSTALAÇÃO CONCLUÍDA COM SUCESSO!            ║"
+echo "║                                                          ║"
+echo "╚══════════════════════════════════════════════════════════╝"
+echo -e "${NC}"
 echo ""
-blue "📋 RESUMO:"
-echo "----------------------------------------"
-echo "🌐 Domínio:      $DOMAIN"
-echo "📁 Diretório:    $INSTALL_DIR"
-echo "📧 Email:        $EMAIL"
+echo "📊 RESUMO DA INSTALAÇÃO:"
+echo "══════════════════════════════════════════════════════════"
+echo "🌐 Domínio:          $DOMAIN"
+echo "📧 Email Admin:      $EMAIL"
+echo "📁 Diretório:        $INSTALL_DIR"
 echo ""
 echo "🗄️  Banco de Dados:"
-echo "----------------------------------------"
+echo "────────────────────────────────────"
 echo "Banco:      $DB_NAME"
 echo "Usuário:    $DB_USER"
 echo "Senha:      $DB_PASS"
 echo ""
 echo "🔧 Próximos Passos:"
-echo "----------------------------------------"
-echo "1. COPIE SEUS ARQUIVOS:"
+echo "────────────────────────────────────"
+echo "1. 📂 COPIE SEUS ARQUIVOS:"
 echo "   cp -r /caminho/dos/seus/arquivos/* $INSTALL_DIR/"
 echo ""
-echo "2. CONFIGURE O DNS:"
+echo "2. 🌐 CONFIGURE O DNS:"
 echo "   $DOMAIN → 45.140.193.50"
 echo ""
-echo "3. CONFIGURE SSL (após DNS):"
+echo "3. 🔒 CONFIGURE SSL (após DNS):"
 echo "   sudo certbot --apache -d $DOMAIN"
 echo ""
-echo "4. ACESSE O SISTEMA:"
+echo "4. 🚀 ACESSE O SISTEMA:"
 echo "   https://$DOMAIN"
 echo ""
-echo "5. LOGIN ADMIN (padrão):"
+echo "5. 👤 LOGIN ADMIN (padrão):"
 echo "   Usuário: admin"
 echo "   Email: $EMAIL"
 echo ""
-blue "⚙️  Comandos úteis:"
-echo "----------------------------------------"
+echo "⚙️  Comandos úteis:"
+echo "────────────────────────────────────"
 echo "• Reiniciar Apache: sudo systemctl restart apache2"
 echo "• Ver logs: sudo tail -f /var/log/apache2/audioextractor-*.log"
 echo "• Acessar MySQL: mysql -u $DB_USER -p $DB_NAME"
 echo "• Acessar diretório: cd $INSTALL_DIR"
-echo ""
-green "✅ Instalação completa!"
+echo "══════════════════════════════════════════════════════════"
 echo ""
 
 # Criar arquivo de resumo
@@ -405,5 +470,8 @@ Ver logs: sudo tail -f /var/log/apache2/audioextractor-*.log
 ========================================
 EOF
 
-green "📄 Resumo salvo em: /root/instalacao_resumo.txt"
+success "📄 Resumo salvo em: /root/instalacao_resumo.txt"
+echo ""
+info "🎉 Instalação concluída! O sistema está pronto."
+info "👨‍💼 Lembre-se de copiar seus arquivos PHP para: $INSTALL_DIR"
 echo ""
