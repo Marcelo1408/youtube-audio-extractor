@@ -351,14 +351,14 @@ setup_database() {
     log "Configurando banco de dados..."
     
     # Criar banco de dados
-    mysql -u root -p"${DB_PASSWORD}" <<EOF
-CREATE DATABASE IF NOT EXISTS youtube_extractor 
-CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS 'youtube_user'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
-GRANT ALL PRIVILEGES ON youtube_extractor.* TO 'youtube_user'@'localhost';
-GRANT PROCESS ON *.* TO 'youtube_user'@'localhost';
+  log "Configurando segurança do MariaDB..."
+sudo mysql <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket;
+DELETE FROM mysql.user WHERE User='';
+DROP DATABASE IF EXISTS test;
 FLUSH PRIVILEGES;
 EOF
+
     
     # Importar estrutura do banco
     if [ -f "$INSTALL_DIR/sql/database.sql" ]; then
