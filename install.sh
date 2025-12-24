@@ -264,7 +264,7 @@ install_python() {
     
     # Instalar bibliotecas Python (COM CELERY CORRIGIDO)
     pip3 install --upgrade pip
-    pip3 install \
+        pip3 install \
         yt-dlp \
         spleeter \
         tensorflow \
@@ -275,7 +275,7 @@ install_python() {
         pika \
         flask \
         requests \
-        numpy \
+        'numpy<2.0.0' \        # ← FORÇAR versão compatível
         scipy
     
     deactivate
