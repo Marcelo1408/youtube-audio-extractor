@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # YouTube Audio Extractor - Instalador Automático Completo
-# Versão: 2.0.1
+# Versão: 2.0.2
 # Autor: Sistema YouTube Audio Extractor
 
 set -e
@@ -69,22 +69,47 @@ check_root() {
 # Função para verificar conexão com internet
 check_internet() {
     log "Verificando conexão com a internet..."
-    if ! ping -c 1 8.8.8.8 &> /dev/null; then
-        error "Sem conexão com a internet"
+    if ! ping -c 1 -W 2 8.8.8.8 &> /dev/null && ! ping -c 1 -W 2 1.1.1.1 &> /dev/null; then
+        error "Sem conexão com a internet ou ping bloqueado"
+        echo "Verifique sua conexão ou firewall"
         exit 1
     fi
     success "Conexão com internet OK"
 }
 
-# Função para obter IP público
+# Função para obter IP público - CORRIGIDA
 get_public_ip() {
-    PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me || curl -s --max-time 3 icanhazip.com || echo "127.0.0.1")
-    echo "$PUBLIC_IP"
+    local ip=""
+    
+    # Tentar múltiplos serviços com timeout
+    local services=(
+        "https://api.ipify.org"
+        "https://icanhazip.com"
+        "https://ifconfig.me"
+        "https://ipecho.net/plain"
+        "https://checkip.amazonaws.com"
+    )
+    
+    for service in "${services[@]}"; do
+        ip=$(curl -s --max-time 5 "$service" 2>/dev/null | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+        if [[ -n "$ip" ]] && [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    
+    # Se todos falharem, tentar obter IP local
+    ip=$(hostname -I | awk '{print $1}' 2>/dev/null)
+    if [[ -n "$ip" ]]; then
+        echo "$ip"
+    else
+        echo "127.0.0.1"
+    fi
 }
 
 # Função para perguntar confirmação
 confirm() {
-    read -p "$1 (s/n): " -n 1 -r
+    read -p "$1 (s/N): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Ss]$ ]]; then
         return 1
@@ -110,6 +135,11 @@ validate_email() {
     else
         return 1
     fi
+}
+
+# Limpar tela
+clear_screen() {
+    clear
 }
 
 # ============================================================================
@@ -421,7 +451,7 @@ check_mysql_access() {
         return 0
     fi
     
-    # Tentar acessar com senha de root do sistema (para MariaDB no Ubuntu)
+    # Tentar acessar com sudo (para MariaDB no Ubuntu)
     if sudo mysql -e "SELECT 1;" &> /dev/null; then
         info "MySQL acessível com sudo"
         return 0
@@ -438,7 +468,8 @@ check_mysql_access() {
     echo "3. Para MariaDB no Ubuntu, tente acessar com: sudo mysql"
     echo ""
     
-    while true; do
+    local attempts=0
+    while [ $attempts -lt 3 ]; do
         read -s -p "Digite a senha do root do MySQL (ou Enter para tentar sem senha): " CURRENT_DB_PASS
         echo ""
         
@@ -454,11 +485,24 @@ check_mysql_access() {
             fi
         fi
         
-        error "Senha incorreta ou não foi possível conectar ao MySQL"
-        if ! confirm "Deseja tentar novamente?"; then
-            return 1
+        ((attempts++))
+        error "Senha incorreta ou não foi possível conectar ao MySQL (tentativa $attempts/3)"
+        
+        if [ $attempts -lt 3 ]; then
+            if ! confirm "Deseja tentar novamente?"; then
+                break
+            fi
         fi
     done
+    
+    error "Não foi possível conectar ao MySQL após $attempts tentativas"
+    echo ""
+    echo "Soluções possíveis:"
+    echo "1. Execute 'sudo mysql_secure_installation' para reconfigurar o MySQL"
+    echo "2. Reinicie o MySQL: sudo systemctl restart mysql"
+    echo "3. Tente acessar manualmente e depois execute novamente este script"
+    echo ""
+    return 1
 }
 
 # Clonar repositório
@@ -486,24 +530,97 @@ clone_repository() {
     mkdir -p "$INSTALL_DIR"
     
     # Tentar clonar o repositório
+    log "Clonando de $REPO_URL ..."
     if git clone "$REPO_URL" "$INSTALL_DIR" 2>/dev/null; then
         success "Repositório clonado com sucesso"
     else
         warn "Falha ao clonar repositório. Criando estrutura básica..."
         
         # Criar estrutura de diretórios básica
-        mkdir -p "$INSTALL_DIR"/{assets/uploads,logs,backup,scripts,sql}
+        mkdir -p "$INSTALL_DIR"/{assets/uploads,logs,backup,scripts,sql,includes}
         
         # Criar arquivos básicos
         cat > "$INSTALL_DIR/index.php" <<'EOF'
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Audio Extractor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .status {
+            background: #e7f3fe;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .btn {
+            display: inline-block;
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 4px;
+            margin: 10px 5px;
+        }
+        .btn:hover {
+            background: #45a049;
+        }
+    </style>
 </head>
 <body>
-    <h1>YouTube Audio Extractor - Instalação em Progresso</h1>
-    <p>Sistema está sendo configurado. Por favor, aguarde.</p>
+    <div class="container">
+        <h1>🎵 YouTube Audio Extractor</h1>
+        
+        <div class="status">
+            <h2>✅ Instalação Concluída!</h2>
+            <p>Sistema instalado e configurado com sucesso.</p>
+            <p>Data da instalação: <?php echo date('d/m/Y H:i:s'); ?></p>
+        </div>
+        
+        <h2>🔧 Configuração do Sistema</h2>
+        <p>O sistema está pronto para uso. As configurações principais incluem:</p>
+        <ul>
+            <li>Processamento de vídeos do YouTube</li>
+            <li>Extração de áudio em múltiplos formatos</li>
+            <li>Sistema de filas para processamento em segundo plano</li>
+            <li>Interface de administração</li>
+        </ul>
+        
+        <h2>🚀 Acesso Rápido</h2>
+        <p>
+            <a href="/admin" class="btn">Painel Admin</a>
+            <a href="/status" class="btn">Status Sistema</a>
+            <a href="/docs" class="btn">Documentação</a>
+        </p>
+        
+        <h2>📞 Suporte</h2>
+        <p>Para problemas ou dúvidas, consulte a documentação ou entre em contato.</p>
+        
+        <footer style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666;">
+            <p>YouTube Audio Extractor &copy; <?php echo date('Y'); ?></p>
+        </footer>
+    </div>
 </body>
 </html>
 EOF
@@ -519,15 +636,35 @@ RewriteEngine On
     Deny from all
 </FilesMatch>
 
-<FilesMatch "\.(sql|log|ini|conf|env)$">
+<FilesMatch "\.(sql|log|ini|conf|env|key)$">
     Order allow,deny
     Deny from all
 </FilesMatch>
 
-# Redirecionar para index.php
+# Redirecionar para index.php (se for um framework MVC)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [L]
+
+# Forçar HTTPS (se configurado)
+# RewriteCond %{HTTPS} off
+# RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+
+# Compressão GZIP
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json
+</IfModule>
+
+# Cache
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpg "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+</IfModule>
 EOF
         
         info "Estrutura básica criada em: $INSTALL_DIR"
@@ -658,11 +795,10 @@ setup_env_file() {
     log "Configurando arquivo .env..."
     
     ENV_FILE="$INSTALL_DIR/.env"
-    ENV_EXAMPLE="$INSTALL_DIR/.env.example"
     
     # Se existir .env.example, usar como base
-    if [ -f "$ENV_EXAMPLE" ]; then
-        cp "$ENV_EXAMPLE" "$ENV_FILE"
+    if [ -f "$INSTALL_DIR/.env.example" ]; then
+        cp "$INSTALL_DIR/.env.example" "$ENV_FILE"
         info "Copiado .env.example para .env"
     else
         # Criar .env do zero
@@ -1080,14 +1216,10 @@ setup_permissions() {
     find "$INSTALL_DIR/scripts" -name "*.sh" -type f -exec chmod +x {} \;
     
     # Proteger arquivos sensíveis
-    chmod 640 "$INSTALL_DIR/.env" 2>/dev/null || true
-    chmod 640 "$INSTALL_DIR/*.sql" 2>/dev/null || true
+    [ -f "$INSTALL_DIR/.env" ] && chmod 640 "$INSTALL_DIR/.env"
     
     # Configurar stick bit para uploads
     chmod g+s "$INSTALL_DIR/assets/uploads"
-    
-    # Permissões para arquivos de cache/temp
-    find "$INSTALL_DIR/assets/uploads/temp" -type d -exec chmod 777 {} \; 2>/dev/null || true
     
     success "Permissões configuradas"
 }
@@ -1680,14 +1812,14 @@ show_banner() {
     echo "║     ╚═╝    ╚═════╝  ╚═════╝    ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ║"
     echo "║                                                              ║"
     echo "║               YouTube Audio Extractor                         ║"
-    echo "║               Instalador Automático v2.0.1                    ║"
+    echo "║               Instalador Automático v2.0.2                    ║"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     echo ""
 }
 
-# Coletar informações do usuário
+# Coletar informações do usuário - VERSÃO SIMPLIFICADA
 collect_info() {
     show_banner
     
@@ -1697,30 +1829,32 @@ collect_info() {
     echo "de áudio do YouTube com recursos avançados e processamento em IA."
     echo ""
     
-    # Obter IP público
-    info "Obtendo IP público do servidor..."
-    PUBLIC_IP=$(get_public_ip)
-    info "IP público detectado: $PUBLIC_IP"
+    # Obter IP local em vez de público
+    info "Obtendo informações do servidor..."
+    LOCAL_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "127.0.0.1")
+    info "IP local: $LOCAL_IP"
     echo ""
     
     # Perguntar domínio
     echo "Por favor, insira o domínio que será usado para acessar o sistema."
-    echo "Se não tiver um domínio, você pode usar o IP: $PUBLIC_IP"
-    echo "Para desenvolvimento local, use: localhost"
+    echo "Se não tiver um domínio, você pode usar:"
+    echo "  • IP local: $LOCAL_IP"
+    echo "  • Localhost: localhost"
+    echo "  • Ou qualquer outro nome"
     echo ""
     
-    read -p "Domínio ou IP [${PUBLIC_IP}]: " DOMAIN_NAME
-    DOMAIN_NAME=${DOMAIN_NAME:-$PUBLIC_IP}
+    read -p "Domínio, IP ou nome [${LOCAL_IP}]: " DOMAIN_NAME
+    DOMAIN_NAME=${DOMAIN_NAME:-$LOCAL_IP}
     
-    # Validar entrada
+    # Se for vazio, usar localhost
     if [[ -z "$DOMAIN_NAME" ]]; then
-        DOMAIN_NAME="$PUBLIC_IP"
+        DOMAIN_NAME="localhost"
     fi
     
     # Perguntar email do admin
     echo ""
     echo "Informe o email do administrador para notificações e SSL."
-    echo "Se não tiver um email válido, use o padrão."
+    echo "(Para desenvolvimento local, mantenha o padrão)"
     echo ""
     
     read -p "Email do administrador [${EMAIL_ADMIN}]: " input_email
@@ -1739,7 +1873,7 @@ collect_info() {
     echo "  • Atualizar o sistema operacional"
     echo "  • Instalar Apache, MySQL, PHP, Redis, Python"
     echo "  • Configurar ambiente virtual Python com yt-dlp e FFmpeg"
-    echo "  • Configurar SSL (se domínio válido)"
+    echo "  • Configurar SSL automaticamente (se possível)"
     echo "  • Configurar backup e monitoramento automáticos"
     echo ""
     
@@ -1785,10 +1919,11 @@ main_installation() {
     setup_apache_vhost
     
     # 7. Configurar SSL apenas se for domínio válido
-    if [[ "$DOMAIN_NAME" != "localhost" ]] && [[ ! "$DOMAIN_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if validate_domain "$DOMAIN_NAME"; then
         setup_ssl
     else
-        warn "SSL não configurado (IP local ou localhost)"
+        warn "SSL não configurado (IP local, localhost ou nome inválido)"
+        info "Configure SSL manualmente se necessário: sudo certbot --apache"
     fi
     
     setup_supervisor
@@ -1816,8 +1951,11 @@ main_installation() {
     
     if [[ "$DOMAIN_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         info "Acesse o sistema em: http://${DOMAIN_NAME}"
+    elif [[ "$DOMAIN_NAME" == "localhost" ]]; then
+        info "Acesse o sistema em: http://localhost"
     else
-        info "Acesse o sistema em: https://${DOMAIN_NAME}"
+        info "Acesse o sistema em: http://${DOMAIN_NAME}"
+        info "Ou com SSL (se configurado): https://${DOMAIN_NAME}"
     fi
     
     echo ""
@@ -1843,6 +1981,17 @@ main_installation() {
 # Tratamento de erros
 trap 'error "Instalação interrompida pelo usuário"; exit 1' INT
 trap 'error "Ocorreu um erro na linha $LINENO"; exit 1' ERR
+
+# Verificar argumentos
+if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    echo "Uso: sudo ./install.sh"
+    echo ""
+    echo "Opções:"
+    echo "  --help, -h     Mostra esta ajuda"
+    echo "  --domain DOM   Define o domínio automaticamente"
+    echo "  --email EMAIL  Define o email do admin automaticamente"
+    exit 0
+fi
 
 # Executar instalação
 main_installation
