@@ -1,181 +1,149 @@
 #!/bin/bash
-# YouTube Audio Extractor - Instalador Automático
-# Versão 2.2.0 (REESCRITO E CORRIGIDO)
-# Autor: Marcelo Pereira
 
 set -e
 
-# ================== CORES ==================
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+echo "============================================"
+echo " YouTube Audio Extractor - Instalador VPS"
+echo " Ubuntu 22.04 | Produção"
+echo "============================================"
 
-# ================== VARIÁVEIS ==================
-SITE_ZIP_URL="https://github.com/Marcelo1408/youtube-audio-extractor/raw/7fe00f0d688f7a93a9e9eabaf5d29bddb1360120/youtube-audio-extractor.zip"
-INSTALL_DIR="/var/www/youtube-audio-extractor"
-VENV_DIR="/opt/youtube-venv"
+# -------------------------------
+# ENTRADAS DO USUÁRIO
+# -------------------------------
+read -p "Digite o domínio (ex: audioextractor.seudominio.com): " DOMAIN
+read -p "Digite o e-mail para SSL (Let's Encrypt): " EMAIL
+read -p "Digite a senha ROOT do MySQL: " MYSQL_ROOT_PASS
+read -p "Digite o nome do banco de dados: " DB_NAME
+read -p "Digite o usuário do banco: " DB_USER
+read -p "Digite a senha do banco: " DB_PASS
 
-DB_NAME="youtube_extractor"
-DB_USER="youtube_user"
-DB_PASS="youtube_pass"
+PROJECT_DIR="/var/www/$DOMAIN"
 
-DOMAIN_NAME=""
-EMAIL_ADMIN=""
+# -------------------------------
+# ATUALIZA SISTEMA
+# -------------------------------
+apt update && apt upgrade -y
 
-# ================== FUNÇÕES ==================
-log(){ echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
-warn(){ echo -e "${YELLOW}[AVISO]${NC} $1"; }
-error(){ echo -e "${RED}[ERRO]${NC} $1"; }
+# -------------------------------
+# DEPENDÊNCIAS PRINCIPAIS
+# -------------------------------
+apt install -y \
+nginx \
+mysql-server \
+php php-fpm php-mysql php-cli php-curl php-zip php-mbstring php-xml \
+python3 python3-pip \
+ffmpeg \
+curl unzip git software-properties-common \
+certbot python3-certbot-nginx
 
-check_root() {
-  if [ "$EUID" -ne 0 ]; then
-    error "Execute como root (sudo)"
-    exit 1
-  fi
-}
+# -------------------------------
+# PYTHON DEPENDÊNCIAS
+# -------------------------------
+pip3 install --upgrade pip
+pip3 install yt-dlp pydub moviepy
 
-check_internet() {
-  ping -c 1 8.8.8.8 &>/dev/null || { error "Sem internet"; exit 1; }
-}
-
-# ================== COLETA ==================
-collect_info() {
-  read -p "Domínio ou IP do servidor: " DOMAIN_NAME
-  read -p "Email do administrador: " EMAIL_ADMIN
-}
-
-# ================== SISTEMA ==================
-update_system() {
-  log "Atualizando sistema..."
-  apt update && apt upgrade -y
-}
-
-install_packages() {
-  log "Instalando pacotes..."
-  apt install -y \
-    apache2 mariadb-server redis-server \
-    curl wget unzip git supervisor \
-    ffmpeg \
-    python3 python3-pip python3-venv python3-dev \
-    build-essential
-}
-
-# ================== BANCO ==================
-setup_database() {
-  log "Configurando banco de dados..."
-  mysql <<EOF
-CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4;
-CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
-GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
+# -------------------------------
+# CONFIGURA MYSQL
+# -------------------------------
+mysql -u root <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';
+FLUSH PRIVILEGES;
+CREATE DATABASE IF NOT EXISTS $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
+GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
 EOF
-}
 
-# ================== SITE ==================
-download_site() {
-  log "Baixando site..."
-  mkdir -p $INSTALL_DIR
-  wget -O /tmp/site.zip "$SITE_ZIP_URL"
-  unzip -o /tmp/site.zip -d $INSTALL_DIR
-}
+# -------------------------------
+# IMPORTA SQL
+# -------------------------------
+if [ -f "sql/database.sql" ]; then
+  mysql -u $DB_USER -p$DB_PASS $DB_NAME < sql/database.sql
+else
+  echo "❌ ERRO: sql/database.sql não encontrado"
+  exit 1
+fi
 
-import_sql() {
-  if [ -f "$INSTALL_DIR/database.sql" ]; then
-    log "Importando banco..."
-    mysql -u${DB_USER} -p${DB_PASS} ${DB_NAME} < $INSTALL_DIR/database.sql
-  else
-    warn "Arquivo SQL não encontrado"
-  fi
-}
+# -------------------------------
+# MOVE PROJETO
+# -------------------------------
+mkdir -p $PROJECT_DIR
+rsync -av --exclude=install.sh ./ $PROJECT_DIR
 
-# ================== PYTHON ==================
-setup_python() {
-  log "Configurando Python..."
-  python3 -m venv $VENV_DIR
-  source $VENV_DIR/bin/activate
+# -------------------------------
+# PERMISSÕES
+# -------------------------------
+chown -R www-data:www-data $PROJECT_DIR
+chmod -R 755 $PROJECT_DIR
+chmod -R 775 $PROJECT_DIR/uploads
 
-  pip install --upgrade pip setuptools wheel
+# -------------------------------
+# GERAR .ENV
+# -------------------------------
+cat <<EOF > $PROJECT_DIR/.env
+APP_ENV=production
+APP_URL=https://$DOMAIN
 
-  # FIX DEFINITIVO CELERY
-  pip install \
-    pytz==2023.3 \
-    celery==5.3.6 \
-    redis==5.0.1 \
-    billiard==4.2.0 \
-    kombu==5.3.4
+DB_HOST=localhost
+DB_NAME=$DB_NAME
+DB_USER=$DB_USER
+DB_PASS=$DB_PASS
 
-  pip install \
-    flask \
-    yt-dlp \
-    spleeter \
-    pydub \
-    mutagen \
-    requests
-}
-
-# ================== APACHE ==================
-setup_apache() {
-  log "Configurando Apache..."
-  a2enmod rewrite headers
-  cat > /etc/apache2/sites-available/youtube.conf <<EOF
-<VirtualHost *:80>
-  ServerName ${DOMAIN_NAME}
-  DocumentRoot ${INSTALL_DIR}
-
-  <Directory ${INSTALL_DIR}>
-    AllowOverride All
-    Require all granted
-  </Directory>
-</VirtualHost>
+PYTHON_PATH=/usr/bin/python3
+FFMPEG_PATH=/usr/bin/ffmpeg
+YTDLP_PATH=/usr/local/bin/yt-dlp
 EOF
 
-  a2ensite youtube.conf
-  a2dissite 000-default.conf
-  systemctl restart apache2
-}
+chown www-data:www-data $PROJECT_DIR/.env
+chmod 600 $PROJECT_DIR/.env
 
-# ================== SUPERVISOR ==================
-setup_supervisor() {
-  log "Configurando Supervisor..."
-  cat > /etc/supervisor/conf.d/youtube-worker.conf <<EOF
-[program:youtube-worker]
-command=${VENV_DIR}/bin/python ${INSTALL_DIR}/worker.py
-directory=${INSTALL_DIR}
-autostart=true
-autorestart=true
-user=www-data
+# -------------------------------
+# CONFIGURA NGINX
+# -------------------------------
+cat <<EOF > /etc/nginx/sites-available/$DOMAIN
+server {
+    listen 80;
+    server_name $DOMAIN;
+    root $PROJECT_DIR;
+    index index.php index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
 EOF
 
-  supervisorctl reread
-  supervisorctl update
-}
+ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
+nginx -t
+systemctl reload nginx
 
-# ================== PERMISSÕES ==================
-set_permissions() {
-  chown -R www-data:www-data $INSTALL_DIR
-  chmod -R 755 $INSTALL_DIR
-}
+# -------------------------------
+# SSL LETS ENCRYPT
+# -------------------------------
+certbot --nginx -d $DOMAIN --email $EMAIL --agree-tos --non-interactive --redirect
 
-# ================== EXECUÇÃO ==================
-main() {
-  check_root
-  check_internet
-  collect_info
-  update_system
-  install_packages
-  setup_database
-  download_site
-  import_sql
-  setup_python
-  setup_apache
-  setup_supervisor
-  set_permissions
+# -------------------------------
+# CRON SSL
+# -------------------------------
+systemctl enable certbot.timer
 
-  echo ""
-  log "INSTALAÇÃO CONCLUÍDA COM SUCESSO"
-  echo "Acesse: http://${DOMAIN_NAME}"
-}
+# -------------------------------
+# FINALIZAÇÃO
+# -------------------------------
+systemctl restart nginx
+systemctl restart php8.1-fpm
+systemctl restart mysql
 
-main
+echo "============================================"
+echo " ✅ INSTALAÇÃO CONCLUÍDA COM SUCESSO"
+echo " 🌐 Site: https://$DOMAIN"
+echo "============================================"
