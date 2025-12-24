@@ -263,8 +263,13 @@ install_python() {
     source /opt/youtube-venv/bin/activate
     
    
-   # Instalar bibliotecas Python (COM CELERY CORRIGIDO E NUMPY COMPATÍVEL)
+   #    # Instalar bibliotecas Python - SOLUÇÃO PARA NUMPY NO PYTHON 3.10
     pip3 install --upgrade pip
+    
+    # 1. PRIMEIRO: Instalar NumPy com binários pré-compilados (sem compilar)
+    pip3 install --only-binary=numpy 'numpy==1.21.6'
+    
+    # 2. DEPOIS: Instalar o resto das bibliotecas
     pip3 install \
         yt-dlp \
         spleeter \
@@ -276,10 +281,10 @@ install_python() {
         pika \
         flask \
         requests \
-        'numpy==1.18.5' \
         scipy
     
     deactivate
+    success "Python e dependências instaladas"
     success "Python e dependências instaladas"
 }
 
