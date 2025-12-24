@@ -263,31 +263,29 @@ install_python() {
     source /opt/youtube-venv/bin/activate
     
    
- # Atualizar pip e ferramentas
 pip install --upgrade pip setuptools wheel
 
-# Instalar NumPy compatível primeiro
+# NumPy / SciPy / TensorFlow compatíveis
 pip install "numpy<2.0"
-
-# Instalar SciPy compatível
 pip install "scipy<1.12"
-
-# Instalar TensorFlow compatível
 pip install "tensorflow<2.16"
+
+# Celery stack FIXADO (IMPORTANTE)
+pip install \
+  pytz==2023.3 \
+  billiard==4.2.0 \
+  kombu==5.3.4 \
+  celery==5.3.6 \
+  redis==5.0.1
 
 # Demais dependências
 pip install \
-    yt-dlp \
-    spleeter \
-    pydub \
-    mutagen \
-    redis \
-    celery \
-    pika \
-    flask \
-    requests
-
-}
+  yt-dlp \
+  spleeter \
+  flask \
+  requests \
+  pydub \
+  mutagen
 
 # Instalar Node.js (opcional)
 install_nodejs() {
