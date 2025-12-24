@@ -263,8 +263,7 @@ install_python() {
     source /opt/youtube-venv/bin/activate
     
     # Instalar bibliotecas Python (COM CELERY CORRIGIDO)
-    pip3 install --upgrade pip
-        pip3 install \
+     pip3 install \
         yt-dlp \
         spleeter \
         tensorflow \
@@ -275,7 +274,7 @@ install_python() {
         pika \
         flask \
         requests \
-        'numpy<2.0.0' \        # ← FORÇAR versão compatível
+        'numpy<2.0.0' \
         scipy
     
     deactivate
