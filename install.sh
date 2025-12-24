@@ -262,8 +262,10 @@ install_python() {
     python3 -m venv /opt/youtube-venv
     source /opt/youtube-venv/bin/activate
     
-    # Instalar bibliotecas Python (COM CELERY CORRIGIDO)
-     pip3 install \
+   
+   # Instalar bibliotecas Python (COM CELERY CORRIGIDO E NUMPY COMPATÍVEL)
+    pip3 install --upgrade pip
+    pip3 install \
         yt-dlp \
         spleeter \
         tensorflow \
