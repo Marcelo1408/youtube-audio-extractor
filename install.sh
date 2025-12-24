@@ -1,288 +1,266 @@
 #!/bin/bash
-
-# YouTube Audio Extractor - Instalador Simplificado
-# Versão: 3.0.0
-# Autor: Sistema YouTube Audio Extractor
+# YouTube Audio Extractor - Instalador Ultra Simples
+# Versão: 4.0.0
 
 set -e
 
 # ============================================================================
-# CONFIGURAÇÕES FIXAS (USE SUAS CREDENCIAIS)
+# CONFIGURAÇÕES (FIXAS - SEU SISTEMA)
 # ============================================================================
-
-# Credenciais DO SEU SISTEMA (do seu .env/config.php)
-DB_DATABASE="audioextractor"
-DB_USERNAME="audioextrac_usr"
-DB_PASSWORD="3GqG!%Yg7i;YsI4Y"
-
-# Configurações do sistema
-DOMAIN_NAME="audioextractor.giize.com"
-EMAIL_ADMIN="mpnascimento031@gmail.com"
-INSTALL_DIR="/var/www/youtube-audio-extractor"
-
-# Senhas geradas
-ADMIN_PASSWORD=$(openssl rand -base64 12)
-SECRET_KEY=$(openssl rand -base64 48)
+DOMAIN="audioextractor.giize.com"
+EMAIL="mpnascimento031@gmail.com"
+INSTALL_DIR="/var/www/audioextractor"
+DB_NAME="youtube_extractor"
+DB_USER="audioextrac_usr"
+DB_PASS="3GqG!%Yg7i;YsI4Y"
 
 # ============================================================================
-# FUNÇÕES BÁSICAS
+# FUNÇÕES SIMPLES
 # ============================================================================
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-log() { echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
-info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-warn() { echo -e "${YELLOW}[AVISO]${NC} $1"; }
-error() { echo -e "${RED}[ERRO]${NC} $1"; }
-
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        error "Execute como root: sudo ./install.sh"
-        exit 1
-    fi
-}
+green() { echo -e "\033[1;32m$1\033[0m"; }
+blue() { echo -e "\033[1;34m$1\033[0m"; }
+yellow() { echo -e "\033[1;33m$1\033[0m"; }
+red() { echo -e "\033[1;31m$1\033[0m"; }
 
 # ============================================================================
-# INSTALAÇÃO DIRETA
+# INSTALAÇÃO PRINCIPAL
 # ============================================================================
+clear
+echo "================================================"
+echo "    YOUTUBE AUDIO EXTRACTOR - INSTALADOR"
+echo "================================================"
+echo ""
+echo "Este instalador vai:"
+echo "1. Instalar Apache, MySQL, PHP, Python"
+echo "2. Criar banco de dados: $DB_NAME"
+echo "3. Configurar site em: $INSTALL_DIR"
+echo "4. Configurar domínio: $DOMAIN"
+echo ""
+read -p "Pressione Enter para continuar ou Ctrl+C para cancelar..."
 
-install_dependencies() {
-    log "Atualizando sistema..."
-    apt update && apt upgrade -y
-    
-    log "Instalando dependências..."
-    apt install -y \
-        apache2 \
-        mariadb-server \
-        mariadb-client \
-        software-properties-common \
-        curl \
-        wget \
-        git \
-        unzip \
-        python3 \
-        python3-pip \
-        python3-venv \
-        ffmpeg \
-        redis-server \
-        supervisor \
-        certbot \
-        python3-certbot-apache
-    
-    log "Instalando PHP 8.2..."
-    add-apt-repository -y ppa:ondrej/php
-    apt update
-    apt install -y \
-        php8.2 php8.2-cli php8.2-mysql php8.2-curl php8.2-gd \
-        php8.2-mbstring php8.2-xml php8.2-zip php8.2-bcmath \
-        libapache2-mod-php8.2
-}
+# ============================================================================
+# PASSO 1: INSTALAR PACOTES
+# ============================================================================
+blue "\n[1/6] Instalando pacotes básicos..."
+apt update
+apt install -y apache2 mariadb-server mariadb-client \
+              software-properties-common curl wget git \
+              python3 python3-pip python3-venv ffmpeg
 
-setup_mysql() {
-    log "Configurando MySQL..."
-    
-    # Iniciar MySQL se não estiver rodando
-    systemctl start mariadb 2>/dev/null || systemctl start mysql 2>/dev/null
-    
-    echo ""
-    echo "================================================================================"
-    echo "CONFIGURAÇÃO DO MYSQL"
-    echo "================================================================================"
-    echo ""
-    echo "O MySQL/MariaDB precisa ser configurado."
-    echo ""
-    echo "1. Para Ubuntu/Debian, geralmente você pode acessar com: sudo mysql"
-    echo "2. Se já configurou senha, use: mysql -u root -p"
-    echo "3. Se não sabe, execute primeiro: sudo mysql_secure_installation"
-    echo ""
-    echo "Vou te ajudar a configurar. Escolha uma opção:"
-    echo ""
-    echo "a) Já tenho acesso ao MySQL (pressione Enter para pular)"
-    echo "b) Quero configurar agora com mysql_secure_installation"
-    echo "c) Quero acessar manualmente e depois continuar"
-    echo ""
-    
-    read -p "Sua escolha (a/b/c): " mysql_choice
-    
-    case $mysql_choice in
-        b)
-            echo "Executando mysql_secure_installation..."
-            mysql_secure_installation
-            ;;
-        c)
-            echo "Acesse o MySQL manualmente. Depois volte e pressione Enter."
-            echo "Comandos úteis:"
-            echo "  sudo mysql"
-            echo "  ou"
-            echo "  mysql -u root -p"
-            read -p "Pressione Enter após configurar o MySQL..."
-            ;;
-        *)
-            echo "Pulando configuração do MySQL..."
-            ;;
-    esac
-    
-    echo ""
-    echo "Agora preciso criar o banco de dados do sistema."
-    echo "Vou usar estas credenciais DO SEU SISTEMA:"
-    echo "  Banco: $DB_DATABASE"
-    echo "  Usuário: $DB_USERNAME"
-    echo ""
-    echo "Preciso acessar o MySQL como root para criar o banco."
-    echo ""
-    
-    # Tentar diferentes formas de acesso
-    if mysql -u root -e "SELECT 1;" 2>/dev/null; then
-        echo "✅ Consegui acessar MySQL sem senha"
-        MYSQL_CMD="mysql -u root"
-    elif sudo mysql -e "SELECT 1;" 2>/dev/null; then
-        echo "✅ Consegui acessar MySQL com sudo"
+# PHP
+add-apt-repository -y ppa:ondrej/php
+apt update
+apt install -y php8.2 php8.2-cli php8.2-mysql php8.2-curl \
+               php8.2-gd php8.2-mbstring php8.2-xml php8.2-zip \
+               php8.2-bcmath libapache2-mod-php8.2
+
+# Ferramentas Python
+blue "\n[2/6] Instalando ferramentas Python..."
+python3 -m venv /opt/audioenv
+/opt/audioenv/bin/pip install yt-dlp pydub redis
+
+# ============================================================================
+# PASSO 2: CONFIGURAR MYSQL
+# ============================================================================
+blue "\n[3/6] Configurando MySQL..."
+systemctl start mariadb
+systemctl enable mariadb
+
+echo ""
+echo "================================================"
+echo "        CONFIGURAÇÃO DO MYSQL"
+echo "================================================"
+echo ""
+echo "Para criar o banco de dados, preciso acessar o MySQL."
+echo ""
+echo "ESCOLHA UMA OPÇÃO:"
+echo "A) Usar 'sudo mysql' (recomendado para Ubuntu)"
+echo "B) Usar 'mysql -u root' (sem senha)"
+echo "C) Usar 'mysql -u root -p' (com senha)"
+echo "D) Já configurei manualmente, pular"
+echo ""
+read -p "Digite A, B, C ou D: " mysql_option
+
+case $mysql_option in
+    A|a)
         MYSQL_CMD="sudo mysql"
-    else
-        echo "⚠️  Não consegui acessar automaticamente."
-        echo "Por favor, digite o comando para acessar o MySQL como root:"
-        echo "Exemplos:"
-        echo "  mysql -u root"
-        echo "  mysql -u root -p"
-        echo "  sudo mysql"
-        echo ""
-        read -p "Comando MySQL: " mysql_cmd
-        MYSQL_CMD="$mysql_cmd"
-        
-        # Testar o comando
-        if ! $MYSQL_CMD -e "SELECT 1;" 2>/dev/null; then
-            error "Não foi possível acessar com esse comando."
-            warn "Vou pular a criação do banco. Você pode criar manualmente depois."
-            return 1
-        fi
-    fi
+        ;;
+    B|b)
+        MYSQL_CMD="mysql -u root"
+        ;;
+    C|c)
+        MYSQL_CMD="mysql -u root -p"
+        ;;
+    D|d)
+        yellow "Pulando criação do banco. Crie manualmente depois."
+        MYSQL_CMD=""
+        ;;
+    *)
+        red "Opção inválida. Usando 'sudo mysql' como padrão."
+        MYSQL_CMD="sudo mysql"
+        ;;
+esac
+
+if [ -n "$MYSQL_CMD" ]; then
+    blue "Criando banco de dados $DB_NAME..."
     
-    # Criar banco de dados
-    log "Criando banco de dados..."
-    $MYSQL_CMD <<EOF
-CREATE DATABASE IF NOT EXISTS \`$DB_DATABASE\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '$DB_USERNAME'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
-GRANT ALL PRIVILEGES ON \`$DB_DATABASE\`.* TO '$DB_USERNAME'@'localhost';
+    # Criar arquivo SQL temporário
+    SQL_FILE="/tmp/setup_db.sql"
+    cat > "$SQL_FILE" <<EOF
+-- Criar banco de dados
+CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` 
+CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- Criar usuário
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' 
+IDENTIFIED BY '$DB_PASS';
+
+-- Conceder privilégios
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* 
+TO '$DB_USER'@'localhost';
+
+-- Aplicar mudanças
 FLUSH PRIVILEGES;
+
+-- Usar o banco
+USE \`$DB_NAME\`;
+
+-- ESTRUTURA DO SEU BANCO AQUI (simplificada)
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(50) NOT NULL UNIQUE,
+  email VARCHAR(100) NOT NULL UNIQUE,
+  password VARCHAR(255) NOT NULL,
+  role ENUM('user','admin','moderator') DEFAULT 'user',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS processes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  youtube_url TEXT NOT NULL,
+  status ENUM('pending','processing','completed','failed') DEFAULT 'pending',
+  file_path VARCHAR(500),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Inserir admin padrão
+INSERT INTO users (username, email, password, role) VALUES
+('admin', '$EMAIL', '\$2y\$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin')
+ON DUPLICATE KEY UPDATE email='$EMAIL';
 EOF
     
-    if [ $? -eq 0 ]; then
-        log "Banco de dados criado com sucesso!"
-        echo "  Banco: $DB_DATABASE"
-        echo "  Usuário: $DB_USERNAME"
-        echo "  Senha: [sua senha configurada]"
+    # Executar SQL
+    if $MYSQL_CMD < "$SQL_FILE" 2>/dev/null; then
+        green "✅ Banco de dados criado com sucesso!"
     else
-        warn "Não foi possível criar o banco automaticamente."
-        warn "Crie manualmente depois com:"
-        warn "  CREATE DATABASE $DB_DATABASE;"
-        warn "  CREATE USER '$DB_USERNAME'@'localhost' IDENTIFIED BY 'SUA_SENHA';"
-        warn "  GRANT ALL ON $DB_DATABASE.* TO '$DB_USERNAME'@'localhost';"
+        yellow "⚠️  Não foi possível criar via script."
+        yellow "Crie manualmente depois:"
+        yellow "  Banco: $DB_NAME"
+        yellow "  Usuário: $DB_USER"
+        yellow "  Senha: $DB_PASS"
     fi
-}
-
-setup_website() {
-    log "Configurando site..."
     
-    # Clonar ou usar diretório existente
-    if [ -d "$INSTALL_DIR" ]; then
-        warn "Diretório $INSTALL_DIR já existe. Usando existente."
-    else
-        mkdir -p "$INSTALL_DIR"
-        
-        # Criar index.php básico
-        cat > "$INSTALL_DIR/index.php" <<EOF
+    rm -f "$SQL_FILE"
+fi
+
+# ============================================================================
+# PASSO 3: CONFIGURAR APACHE
+# ============================================================================
+blue "\n[4/6] Configurando Apache..."
+
+# Criar diretório do site
+mkdir -p "$INSTALL_DIR"
+
+# Criar index.php de teste
+cat > "$INSTALL_DIR/index.php" <<EOF
 <!DOCTYPE html>
 <html>
 <head>
     <title>YouTube Audio Extractor</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .container { max-width: 800px; margin: 0 auto; }
-        .header { background: #4CAF50; color: white; padding: 20px; border-radius: 5px; }
-        .content { padding: 20px; border: 1px solid #ddd; margin-top: 20px; border-radius: 5px; }
+        body { font-family: Arial; margin: 40px; }
+        .box { background: #f0f0f0; padding: 20px; border-radius: 5px; margin: 20px 0; }
         .success { color: green; }
         .error { color: red; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🎵 YouTube Audio Extractor</h1>
-            <p>Sistema instalado com sucesso!</p>
-        </div>
-        <div class="content">
-            <h2>✅ Sistema Pronto</h2>
-            
-            <?php
-            // Testar MySQL
-            \$mysqli = new mysqli('localhost', '$DB_USERNAME', '$DB_PASSWORD', '$DB_DATABASE');
-            if (\$mysqli->connect_error) {
-                echo '<p class="error">❌ Erro MySQL: ' . \$mysqli->connect_error . '</p>';
-            } else {
-                echo '<p class="success">✅ Conexão MySQL OK</p>';
-                \$mysqli->close();
-            }
-            
-            // Testar PHP
-            echo '<p class="success">✅ PHP ' . phpversion() . ' funcionando</p>';
-            ?>
-            
-            <h3>📊 Informações</h3>
-            <p><strong>Domínio:</strong> <?php echo \$_SERVER['HTTP_HOST'] ?? '$DOMAIN_NAME'; ?></p>
-            <p><strong>Data:</strong> <?php echo date('d/m/Y H:i:s'); ?></p>
-            
-            <h3>🔧 Próximos Passos</h3>
-            <ol>
-                <li>Configure os arquivos do sistema em $INSTALL_DIR</li>
-                <li>Configure o .env com suas credenciais</li>
-                <li>Acesse o painel admin em /admin</li>
-            </ol>
-        </div>
+    <h1>🎵 YouTube Audio Extractor</h1>
+    
+    <div class="box">
+        <h2>✅ Sistema Instalado</h2>
+        <p><strong>Domínio:</strong> <?php echo \$_SERVER['HTTP_HOST'] ?? '$DOMAIN'; ?></p>
+        <p><strong>Diretório:</strong> <?php echo __DIR__; ?></p>
+        <p><strong>Data:</strong> <?php echo date('d/m/Y H:i:s'); ?></p>
+    </div>
+    
+    <div class="box">
+        <h2>🧪 Testes do Sistema</h2>
+        <?php
+        // Testar PHP
+        echo '<p class="success">✅ PHP ' . phpversion() . ' funcionando</p>';
+        
+        // Testar MySQL
+        \$conn = new mysqli('localhost', '$DB_USER', '$DB_PASS', '$DB_NAME');
+        if (\$conn->connect_error) {
+            echo '<p class="error">❌ MySQL: ' . \$conn->connect_error . '</p>';
+        } else {
+            echo '<p class="success">✅ MySQL conectado ao banco: $DB_NAME</p>';
+            \$conn->close();
+        }
+        
+        // Testar Apache
+        echo '<p class="success">✅ Apache funcionando</p>';
+        ?>
+    </div>
+    
+    <div class="box">
+        <h2>📁 Próximos Passos</h2>
+        <ol>
+            <li>Copie seus arquivos PHP para: <?php echo __DIR__; ?></li>
+            <li>Configure o arquivo .env com suas credenciais</li>
+            <li>Configure o DNS: $DOMAIN → 45.140.193.50</li>
+            <li>Execute: sudo certbot --apache -d $DOMAIN</li>
+        </ol>
     </div>
 </body>
 </html>
 EOF
-    fi
-    
-    # Criar .env básico
-    cat > "$INSTALL_DIR/.env" <<EOF
+
+# Criar .htaccess
+cat > "$INSTALL_DIR/.htaccess" <<EOF
+Options -Indexes
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L]
+EOF
+
+# Criar arquivo .env de exemplo
+cat > "$INSTALL_DIR/.env.example" <<EOF
 APP_NAME=YouTube Audio Extractor
 APP_ENV=production
 APP_DEBUG=false
-APP_URL=https://$DOMAIN_NAME
-APP_KEY=$SECRET_KEY
+APP_URL=https://$DOMAIN
 
-# SEU BANCO DE DADOS
 DB_CONNECTION=mysql
 DB_HOST=localhost
 DB_PORT=3306
-DB_DATABASE=$DB_DATABASE
-DB_USERNAME=$DB_USERNAME
-DB_PASSWORD=$DB_PASSWORD
+DB_DATABASE=$DB_NAME
+DB_USERNAME=$DB_USER
+DB_PASSWORD=$DB_PASS
 
 CACHE_DRIVER=file
 SESSION_DRIVER=file
-QUEUE_DRIVER=sync
-
-MAIL_MAILER=smtp
-MAIL_HOST=localhost
-MAIL_PORT=25
-MAIL_USERNAME=
-MAIL_PASSWORD=
-MAIL_FROM_ADDRESS=$EMAIL_ADMIN
-MAIL_FROM_NAME="YouTube Audio Extractor"
 EOF
-    
-    # Configurar Apache
-    log "Configurando Apache..."
-    cat > /etc/apache2/sites-available/audioextractor.conf <<EOF
+
+# Configurar Virtual Host
+cat > /etc/apache2/sites-available/audioextractor.conf <<EOF
 <VirtualHost *:80>
-    ServerName $DOMAIN_NAME
-    ServerAdmin $EMAIL_ADMIN
+    ServerName $DOMAIN
+    ServerAdmin $EMAIL
     DocumentRoot $INSTALL_DIR
     
     ErrorLog \${APACHE_LOG_DIR}/audioextractor-error.log
@@ -300,209 +278,132 @@ EOF
     php_value memory_limit 1G
 </VirtualHost>
 EOF
-    
-    a2dissite 000-default.conf 2>/dev/null
-    a2ensite audioextractor.conf
-    systemctl restart apache2
-}
 
-setup_ssl() {
-    log "Configurando SSL..."
-    
-    echo ""
-    echo "Para configurar SSL, seu domínio precisa apontar para este servidor."
-    echo "Domínio: $DOMAIN_NAME"
-    echo "IP do servidor: 45.140.193.50"
-    echo ""
-    echo "Configure o DNS primeiro, depois execute:"
-    echo "  sudo certbot --apache -d $DOMAIN_NAME"
-    echo ""
-    
-    read -p "O DNS já está configurado? (s/n): " -n 1 dns_ready
-    echo
-    
-    if [[ $dns_ready =~ ^[Ss]$ ]]; then
-        if certbot --apache -d "$DOMAIN_NAME" --non-interactive --agree-tos --email "$EMAIL_ADMIN"; then
-            log "SSL configurado com sucesso!"
-        else
-            warn "Falha ao configurar SSL. Configure manualmente depois."
-        fi
+# Ativar site
+a2dissite 000-default.conf 2>/dev/null || true
+a2ensite audioextractor.conf
+systemctl restart apache2
+
+# ============================================================================
+# PASSO 4: CONFIGURAR SSL (OPCIONAL)
+# ============================================================================
+blue "\n[5/6] Configurando SSL..."
+echo ""
+echo "Para configurar SSL automaticamente, o DNS deve estar apontado."
+echo "Domínio: $DOMAIN"
+echo "IP: 45.140.193.50"
+echo ""
+read -p "O DNS já está configurado? (s/n): " -n 1 dns_ok
+echo ""
+
+if [[ $dns_ok =~ ^[Ss]$ ]]; then
+    apt install -y certbot python3-certbot-apache
+    if certbot --apache -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL"; then
+        green "✅ SSL configurado!"
     else
-        warn "SSL não configurado. Configure depois com:"
-        warn "  sudo certbot --apache -d $DOMAIN_NAME"
+        yellow "⚠️  Falha no SSL. Configure depois:"
+        yellow "  sudo certbot --apache -d $DOMAIN"
     fi
-}
+else
+    yellow "⚠️  SSL não configurado. Configure após DNS:"
+    yellow "  sudo certbot --apache -d $DOMAIN"
+fi
 
-setup_python_tools() {
-    log "Configurando ferramentas Python..."
-    
-    # Criar ambiente virtual
-    python3 -m venv /opt/audioenv
-    
-    # Instalar yt-dlp
-    /opt/audioenv/bin/pip install yt-dlp pydub redis requests
-}
+# ============================================================================
+# PASSO 5: PERMISSÕES
+# ============================================================================
+blue "\n[6/6] Configurando permissões..."
+chown -R www-data:www-data "$INSTALL_DIR"
+find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
+find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
 
-setup_firewall() {
-    log "Configurando firewall..."
-    
-    # Instalar UFW se não existir
-    if ! command -v ufw &>/dev/null; then
-        apt install -y ufw
-    fi
-    
-    ufw allow 22/tcp
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    echo "y" | ufw enable 2>/dev/null || true
-}
+# ============================================================================
+# RESUMO FINAL
+# ============================================================================
+clear
+green "================================================"
+green "    ✅ INSTALAÇÃO CONCLUÍDA!"
+green "================================================"
+echo ""
+blue "📋 RESUMO:"
+echo "----------------------------------------"
+echo "🌐 Domínio:      $DOMAIN"
+echo "📁 Diretório:    $INSTALL_DIR"
+echo "📧 Email:        $EMAIL"
+echo ""
+echo "🗄️  Banco de Dados:"
+echo "----------------------------------------"
+echo "Banco:      $DB_NAME"
+echo "Usuário:    $DB_USER"
+echo "Senha:      $DB_PASS"
+echo ""
+echo "🔧 Próximos Passos:"
+echo "----------------------------------------"
+echo "1. COPIE SEUS ARQUIVOS:"
+echo "   cp -r /caminho/dos/seus/arquivos/* $INSTALL_DIR/"
+echo ""
+echo "2. CONFIGURE O DNS:"
+echo "   $DOMAIN → 45.140.193.50"
+echo ""
+echo "3. CONFIGURE SSL (após DNS):"
+echo "   sudo certbot --apache -d $DOMAIN"
+echo ""
+echo "4. ACESSE O SISTEMA:"
+echo "   https://$DOMAIN"
+echo ""
+echo "5. LOGIN ADMIN (padrão):"
+echo "   Usuário: admin"
+echo "   Email: $EMAIL"
+echo ""
+blue "⚙️  Comandos úteis:"
+echo "----------------------------------------"
+echo "• Reiniciar Apache: sudo systemctl restart apache2"
+echo "• Ver logs: sudo tail -f /var/log/apache2/audioextractor-*.log"
+echo "• Acessar MySQL: mysql -u $DB_USER -p $DB_NAME"
+echo "• Acessar diretório: cd $INSTALL_DIR"
+echo ""
+green "✅ Instalação completa!"
+echo ""
 
-show_summary() {
-    clear
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║         ✅ INSTALAÇÃO CONCLUÍDA!                             ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo ""
-    
-    echo "📋 RESUMO DA INSTALAÇÃO"
-    echo "========================"
-    echo ""
-    echo "🌐 DOMÍNIO: $DOMAIN_NAME"
-    echo "📁 DIRETÓRIO: $INSTALL_DIR"
-    echo "📧 EMAIL: $EMAIL_ADMIN"
-    echo ""
-    
-    echo "🗄️  BANCO DE DADOS (SUAS CREDENCIAIS)"
-    echo "----------------------------------------"
-    echo "Banco: $DB_DATABASE"
-    echo "Usuário: $DB_USERNAME"
-    echo "Senha: [sua senha configurada]"
-    echo ""
-    
-    echo "🔧 CONFIGURAÇÃO"
-    echo "----------------"
-    echo "• Apache instalado e configurado"
-    echo "• MySQL/MariaDB instalado"
-    echo "• PHP 8.2 instalado"
-    echo "• yt-dlp e ferramentas Python configuradas"
-    echo ""
-    
-    echo "🚀 PRÓXIMOS PASSOS"
-    echo "=================="
-    echo ""
-    echo "1. CONFIGURE O DNS (IMPORTANTE!)"
-    echo "   Domínio: $DOMAIN_NAME"
-    echo "   Apontar para: 45.140.193.50"
-    echo ""
-    echo "2. Após DNS propagar, configure SSL:"
-    echo "   sudo certbot --apache -d $DOMAIN_NAME"
-    echo ""
-    echo "3. Copie seus arquivos do sistema para:"
-    echo "   $INSTALL_DIR"
-    echo ""
-    echo "4. Configure o .env com suas credenciais:"
-    echo "   nano $INSTALL_DIR/.env"
-    echo ""
-    echo "5. Acesse o sistema:"
-    echo "   https://$DOMAIN_NAME"
-    echo ""
-    
-    echo "⚙️  COMANDOS ÚTEIS"
-    echo "=================="
-    echo "• Testar MySQL: mysql -u $DB_USERNAME -p $DB_DATABASE"
-    echo "• Reiniciar Apache: sudo systemctl restart apache2"
-    echo "• Ver logs: sudo tail -f /var/log/apache2/audioextractor-*.log"
-    echo "• Acessar diretório: cd $INSTALL_DIR"
-    echo ""
-    
-    # Salvar credenciais
-    cat > /root/install_summary.txt <<EOF
+# Criar arquivo de resumo
+cat > /root/instalacao_resumo.txt <<EOF
 ========================================
-INSTALAÇÃO YOUTUBE AUDIO EXTRACTOR
+YOUTUBE AUDIO EXTRACTOR - RESUMO
 ========================================
 Data: $(date)
 
 SISTEMA
 -------
-URL: https://$DOMAIN_NAME
+URL: https://$DOMAIN
 Diretório: $INSTALL_DIR
-Email: $EMAIL_ADMIN
+Email admin: $EMAIL
 
 BANCO DE DADOS
 --------------
 Host: localhost
-Banco: $DB_DATABASE
-Usuário: $DB_USERNAME
-Senha: [sua senha configurada]
+Banco: $DB_NAME
+Usuário: $DB_USER
+Senha: $DB_PASS
 
 DNS
 ---
-Domínio: $DOMAIN_NAME
+Domínio: $DOMAIN
 IP do servidor: 45.140.193.50
+
+PRÓXIMOS PASSOS
+---------------
+1. Copie seus arquivos PHP para $INSTALL_DIR
+2. Configure DNS: $DOMAIN → 45.140.193.50
+3. Configure SSL: sudo certbot --apache -d $DOMAIN
+4. Acesse: https://$DOMAIN
 
 COMANDOS
 --------
-Configurar SSL: sudo certbot --apache -d $DOMAIN_NAME
-Acessar MySQL: mysql -u $DB_USERNAME -p $DB_DATABASE
+Testar MySQL: mysql -u $DB_USER -p $DB_NAME
 Reiniciar Apache: sudo systemctl restart apache2
+Ver logs: sudo tail -f /var/log/apache2/audioextractor-*.log
 ========================================
 EOF
-    
-    echo "📄 Este resumo foi salvo em: /root/install_summary.txt"
-    echo ""
-}
 
-# ============================================================================
-# EXECUÇÃO PRINCIPAL
-# ============================================================================
-
-main() {
-    clear
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║         YOUTUBE AUDIO EXTRACTOR - INSTALADOR                 ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo ""
-    echo "Este instalador vai configurar o sistema com SUAS credenciais:"
-    echo ""
-    echo "• Domínio: $DOMAIN_NAME"
-    echo "• Banco: $DB_DATABASE"
-    echo "• Usuário BD: $DB_USERNAME"
-    echo ""
-    
-    read -p "Pressione Enter para continuar ou Ctrl+C para cancelar..."
-    echo ""
-    
-    # Verificar root
-    check_root
-    
-    # 1. Instalar dependências
-    install_dependencies
-    
-    # 2. Configurar MySQL (com interação simples)
-    setup_mysql
-    
-    # 3. Configurar site
-    setup_website
-    
-    # 4. Configurar SSL (se DNS pronto)
-    setup_ssl
-    
-    # 5. Configurar Python
-    setup_python_tools
-    
-    # 6. Configurar firewall
-    setup_firewall
-    
-    # 7. Mostrar resumo
-    show_summary
-    
-    log "✅ Instalação concluída!"
-    echo ""
-    echo "Lembre-se: Configure o DNS antes de acessar o sistema!"
-    echo "Domínio: $DOMAIN_NAME → IP: 45.140.193.50"
-    echo ""
-}
-
-# Executar
-main
+green "📄 Resumo salvo em: /root/instalacao_resumo.txt"
+echo ""
