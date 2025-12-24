@@ -163,23 +163,25 @@ install_apache() {
 
 # Instalar MySQL
 install_mysql() {
-    log "Instalando MySQL..."
-    apt install -y mysql-server
+    log "Instalando MariaDB (compatível com MySQL)..."
     
-    # Configurar segurança
-    log "Configurando segurança do MySQL..."
+    apt update
+    apt install -y mariadb-server mariadb-client
+    
+    systemctl enable mariadb
+    systemctl start mariadb
+    
+    log "Configurando segurança do MariaDB..."
     mysql -e "
-    ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '${DB_PASSWORD}';
+    ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
     DELETE FROM mysql.user WHERE User='';
-    DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
     DROP DATABASE IF EXISTS test;
-    DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
     FLUSH PRIVILEGES;
     "
     
-    systemctl enable mysql
-    systemctl start mysql
-    success "MySQL instalado e configurado"
+    success "MariaDB instalado e configurado com sucesso"
+}
+
 }
 
 # Instalar PHP
