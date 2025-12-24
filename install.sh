@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # YouTube Audio Extractor - Instalador Automático Completo
-# Versão: 2.0.2
+# Versão: 2.0.3
 # Autor: Sistema YouTube Audio Extractor
 
 set -e
@@ -143,7 +143,7 @@ clear_screen() {
 }
 
 # ============================================================================
-# FUNÇÕES DE INSTALAÇÃO
+# FUNÇÕES DE INSTALAÇÃO - CORRIGIDAS
 # ============================================================================
 
 # Atualizar sistema
@@ -208,7 +208,7 @@ install_apache() {
     fi
 }
 
-# Instalar MySQL/MariaDB
+# Instalar MySQL/MariaDB - CORRIGIDA
 install_mysql() {
     log "Instalando MariaDB (compatível com MySQL)..."
     
@@ -223,6 +223,9 @@ install_mysql() {
     
     systemctl enable mariadb
     systemctl start mariadb
+    
+    # Esperar um pouco para o MySQL iniciar
+    sleep 5
     
     # Configurar inicialização segura
     log "Configurando segurança básica do MariaDB..."
@@ -240,42 +243,49 @@ EOF
         success "MariaDB instalado e senha do root configurada"
     else
         warn "MariaDB já tem senha configurada. Configure manualmente se necessário."
-        warn "Execute: sudo mysql_secure_installation"
+        info "Execute: sudo mysql_secure_installation"
+        info "Ou tente acessar com: sudo mysql"
     fi
 }
 
-# Instalar PHP
+# Instalar PHP - CORRIGIDA
 install_php() {
     log "Instalando PHP e extensões..."
     
     # Verificar se PHP já está instalado
-    if command -v php &> /dev/null && php --version | grep -q "8.2"; then
-        warn "PHP 8.2 já está instalado. Pulando instalação..."
-    else
-        # Adicionar repositório do PHP
-        apt install -y software-properties-common
-        add-apt-repository -y ppa:ondrej/php
-        apt update
-        
-        # Instalar PHP 8.2 e extensões
-        apt install -y \
-            php8.2 \
-            php8.2-cli \
-            php8.2-fpm \
-            php8.2-mysql \
-            php8.2-curl \
-            php8.2-gd \
-            php8.2-mbstring \
-            php8.2-xml \
-            php8.2-zip \
-            php8.2-bcmath \
-            php8.2-intl \
-            php8.2-redis \
-            php8.2-soap \
-            php8.2-common \
-            php8.2-opcache \
-            libapache2-mod-php8.2
+    if command -v php &> /dev/null; then
+        PHP_VERSION=$(php --version | grep -oP 'PHP \K[0-9]+\.[0-9]+' | head -1)
+        if [[ "$PHP_VERSION" == "8.2" ]]; then
+            warn "PHP 8.2 já está instalado. Pulando instalação..."
+            return 0
+        else
+            warn "PHP $PHP_VERSION já instalado. Instalando PHP 8.2..."
+        fi
     fi
+    
+    # Adicionar repositório do PHP
+    apt install -y software-properties-common
+    add-apt-repository -y ppa:ondrej/php
+    apt update
+    
+    # Instalar PHP 8.2 e extensões
+    apt install -y \
+        php8.2 \
+        php8.2-cli \
+        php8.2-fpm \
+        php8.2-mysql \
+        php8.2-curl \
+        php8.2-gd \
+        php8.2-mbstring \
+        php8.2-xml \
+        php8.2-zip \
+        php8.2-bcmath \
+        php8.2-intl \
+        php8.2-redis \
+        php8.2-soap \
+        php8.2-common \
+        php8.2-opcache \
+        libapache2-mod-php8.2
     
     # Configurar PHP
     PHP_INI="/etc/php/8.2/apache2/php.ini"
@@ -375,16 +385,91 @@ install_python() {
     success "Python e dependências instaladas"
 }
 
-# Instalar Node.js (opcional)
+# Instalar Node.js (opcional) - CORRIGIDA
 install_nodejs() {
     log "Instalando Node.js (opcional)..."
     
     if command -v node &> /dev/null; then
         warn "Node.js já está instalado"
+        return 0
+    fi
+    
+    # Verificar se há pacotes Node.js quebrados
+    log "Verificando pacotes Node.js existentes..."
+    
+    # Remover pacotes Node.js problemáticos se existirem
+    if dpkg -l | grep -q nodejs || dpkg -l | grep -q npm; then
+        warn "Removendo pacotes Node.js problemáticos..."
+        apt remove --purge -y nodejs npm nodejs-dev 2>/dev/null || true
+        apt autoremove -y
+        apt clean
+    fi
+    
+    # Instalar Node.js usando NodeSource (método alternativo)
+    log "Instalando Node.js via NodeSource..."
+    
+    # Instalar dependências necessárias
+    apt install -y curl dirmngr apt-transport-https lsb-release ca-certificates
+    
+    # Adicionar repositório NodeSource para Node.js 18.x (LTS)
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+    
+    # Atualizar cache de pacotes
+    apt update
+    
+    # Instalar Node.js
+    if apt install -y nodejs; then
+        success "Node.js instalado com sucesso"
+        
+        # Verificar instalação
+        if command -v node &> /dev/null; then
+            info "Node.js versão: $(node --version)"
+            info "npm versão: $(npm --version 2>/dev/null || echo 'não disponível')"
+        fi
     else
-        curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-        apt install -y nodejs npm
-        success "Node.js instalado"
+        warn "Falha na instalação do Node.js via apt"
+        warn "Tentando instalação alternativa..."
+        
+        # Método alternativo: instalar Node.js via nvm (Node Version Manager)
+        if install_nodejs_nvm; then
+            success "Node.js instalado via nvm"
+        else
+            error "Não foi possível instalar Node.js"
+            warn "Node.js não é essencial para o sistema, continuando sem ele..."
+            return 1
+        fi
+    fi
+}
+
+# Instalar Node.js via nvm (fallback)
+install_nodejs_nvm() {
+    log "Instalando Node.js via nvm..."
+    
+    # Instalar nvm
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+    
+    # Carregar nvm no shell atual
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+    
+    # Instalar Node.js LTS
+    if nvm install --lts; then
+        # Configurar Node.js LTS como padrão
+        nvm use --lts
+        nvm alias default 'lts/*'
+        
+        # Adicionar ao PATH do sistema
+        echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc
+        echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+        echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"' >> ~/.bashrc
+        
+        # Recarregar .bashrc
+        source ~/.bashrc
+        
+        return 0
+    else
+        return 1
     fi
 }
 
@@ -423,12 +508,18 @@ setup_firewall() {
         if ufw status | grep -q "active"; then
             warn "UFW já está ativo"
         else
-            apt install -y ufw
+            # Instalar UFW se não estiver instalado
+            if ! dpkg -l | grep -q ufw; then
+                apt install -y ufw
+            fi
             
-            ufw allow 22/tcp
-            ufw allow 80/tcp
-            ufw allow 443/tcp
-            ufw --force enable
+            # Configurar regras básicas
+            ufw allow 22/tcp comment 'SSH'
+            ufw allow 80/tcp comment 'HTTP'
+            ufw allow 443/tcp comment 'HTTPS'
+            
+            # Habilitar UFW
+            echo "y" | ufw enable
             
             success "Firewall configurado"
         fi
@@ -1116,7 +1207,7 @@ def main():
             logger.debug("Worker rodando...")
             
         except KeyboardInterrupt:
-            logger.info("Worker interrompido pelo usuário")
+            logger.info("Worker interrompido pelo usuário"
             break
         except Exception as e:
             logger.error(f"Erro no worker: {e}")
@@ -1812,7 +1903,7 @@ show_banner() {
     echo "║     ╚═╝    ╚═════╝  ╚═════╝    ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ║"
     echo "║                                                              ║"
     echo "║               YouTube Audio Extractor                         ║"
-    echo "║               Instalador Automático v2.0.2                    ║"
+    echo "║               Instalador Automático v2.0.3                    ║"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -1905,7 +1996,12 @@ main_installation() {
     install_php
     install_redis
     install_python
-    install_nodejs
+    
+    # Node.js é opcional - continuar mesmo se falhar
+    if ! install_nodejs; then
+        warn "Node.js não instalado. Continuando sem ele..."
+    fi
+    
     install_supervisor
     install_certbot
     setup_firewall
