@@ -182,7 +182,6 @@ install_mysql() {
     success "MariaDB instalado e configurado com sucesso"
 }
 
-}
 
 # Instalar PHP
 install_php() {
