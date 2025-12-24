@@ -276,7 +276,7 @@ install_python() {
         pika \
         flask \
         requests \
-       'numpy==1.24.3' \
+        'numpy==1.18.5' \
         scipy
     
     deactivate
