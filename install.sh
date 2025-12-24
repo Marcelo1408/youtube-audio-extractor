@@ -53,7 +53,7 @@ EOF
 # -------------------------------
 echo "📥 Baixando código do GitHub..."
 
-GITHUB_ZIP_URL="https://github.com/Marcelo1408/youtube-audio-extractor/blob/afc1691c8aa3777e1d0471c15a25355d090615d2/youtube-audio-extractor.zip"
+GITHUB_ZIP_URL="https://github.com/Marcelo1408/youtube-audio-extractor/archive/refs/heads/main.zip"
 
 # Remove diretório antigo se existir
 if [ -d "$PROJECT_DIR" ]; then
