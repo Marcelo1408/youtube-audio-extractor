@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # YouTube Audio Extractor - Instalador Automático Completo
-# Versão: 2.1.0 - MODIFICADO PARA ZIP E SOLICITAR DADOS
+# Versão: 2.1.0 - COM SITE ZIP E CONFIGURAÇÃO PERSONALIZADA
 # Autor: Sistema YouTube Audio Extractor
 
 set -e
@@ -22,12 +22,16 @@ NC='\033[0m' # No Color
 
 # URL do site real no GitHub (ZIP)
 SITE_ZIP_URL="https://github.com/Marcelo1408/youtube-audio-extractor/raw/18d05c50b5bc8c49d813608941b9d79613fdf611/youtube-audio-extractor.zip"
+INSTALL_DIR="/var/www/youtube-audio-extractor"
+
+# Credenciais do banco de dados (do seu config.php)
+DB_NAME="youtube_extractor"
+DB_USER="audioextrac_usr"
+DB_PASS="3GqG!%Yg7i;YsI4Y!"
 
 # Variáveis que serão solicitadas
 DOMAIN_NAME=""
 EMAIL_ADMIN=""
-INSTALL_DIR="/var/www/youtube-audio-extractor"
-DB_PASSWORD=$(openssl rand -base64 32)
 ADMIN_PASSWORD=$(openssl rand -base64 12)
 SECRET_KEY=$(openssl rand -base64 48)
 JWT_SECRET=$(openssl rand -base64 48)
@@ -173,15 +177,8 @@ install_mysql() {
     systemctl enable mariadb
     systemctl start mariadb
     
-    log "Configurando segurança do MariaDB..."
-    mysql -e "
-    ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
-    DELETE FROM mysql.user WHERE User='';
-    DROP DATABASE IF EXISTS test;
-    FLUSH PRIVILEGES;
-    "
-    
-    success "MariaDB instalado e configurado com sucesso"
+    # Não configurar senha do root aqui - vamos usar sudo mysql
+    success "MariaDB instalado"
 }
 
 # Instalar PHP
@@ -265,7 +262,7 @@ install_python() {
     python3 -m venv /opt/youtube-venv
     source /opt/youtube-venv/bin/activate
     
-    # Instalar bibliotecas Python
+    # Instalar bibliotecas Python (COM CELERY CORRIGIDO)
     pip3 install --upgrade pip
     pip3 install \
         yt-dlp \
@@ -274,7 +271,7 @@ install_python() {
         pydub \
         mutagen \
         redis \
-        celery \
+        'celery>=5.3.0' \
         pika \
         flask \
         requests \
@@ -325,12 +322,12 @@ setup_firewall() {
 }
 
 # ============================================================================
-# CONFIGURAÇÃO DO SISTEMA (MODIFICADA PARA ZIP)
+# CONFIGURAÇÃO DO SISTEMA
 # ============================================================================
 
 # Baixar e extrair site do ZIP
-download_and_extract_site() {
-    log "Baixando site do GitHub (ZIP)..."
+clone_repository() {
+    log "Baixando e extraindo site do GitHub (ZIP)..."
     
     if [ -d "$INSTALL_DIR" ]; then
         warn "Diretório $INSTALL_DIR já existe. Fazendo backup..."
@@ -374,68 +371,108 @@ download_and_extract_site() {
     fi
 }
 
-# Configurar banco de dados
+# Configurar banco de dados usando a estrutura SQL do site
 setup_database() {
     log "Configurando banco de dados..."
     
-    # Criar banco de dados e usuário
-    mysql -u root -p"${DB_PASSWORD}" <<EOF
-CREATE DATABASE IF NOT EXISTS youtube_extractor 
+    # 1. Verificar se o arquivo SQL do site existe
+    SQL_FILE="$INSTALL_DIR/sql/database.sql"
+    if [ ! -f "$SQL_FILE" ]; then
+        warn "Arquivo SQL do site não encontrado em: $SQL_FILE"
+        warn "Criando estrutura básica do banco..."
+        
+        # Criar estrutura básica se o arquivo SQL não existir
+        sudo mysql <<EOF
+CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` 
 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-CREATE USER IF NOT EXISTS 'youtube_user'@'localhost' 
-IDENTIFIED BY '${DB_PASSWORD}';
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' 
+IDENTIFIED BY '$DB_PASS';
 
-GRANT ALL PRIVILEGES ON youtube_extractor.* 
-TO 'youtube_user'@'localhost';
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* 
+TO '$DB_USER'@'localhost';
 
 FLUSH PRIVILEGES;
-
-ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket;
-DELETE FROM mysql.user WHERE User='';
-DROP DATABASE IF EXISTS test;
-FLUSH PRIVILEGES;
 EOF
-
-    # Importar estrutura do banco se existir
-    if [ -f "$INSTALL_DIR/sql/database.sql" ]; then
-        mysql -u root -p"${DB_PASSWORD}" youtube_extractor < "$INSTALL_DIR/sql/database.sql"
-        
-        # Atualizar senha do admin
-        mysql -u root -p"${DB_PASSWORD}" youtube_extractor <<EOF
-UPDATE users SET password = '${ADMIN_PASSWORD}' WHERE username = 'admin';
-EOF
+        success "Estrutura básica do banco criada"
+        return 0
     fi
     
-    success "Banco de dados configurado"
+    # 2. Tentar acesso padrão do Ubuntu (sudo mysql)
+    log "Tentando acessar o MariaDB com 'sudo mysql'..."
+    if ! sudo mysql -e "SELECT 1;" > /dev/null 2>&1; then
+        error "Não foi possível acessar o MariaDB com 'sudo mysql'."
+        warn "Execute 'sudo mysql' manualmente para verificar o problema."
+        return 1
+    fi
+    
+    # 3. Criar banco, usuário e importar estrutura COMPLETA do SQL
+    log "Criando banco de dados '$DB_NAME' e importando estrutura completa..."
+    
+    sudo mysql <<EOF
+-- Criar banco de dados se não existir
+CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` 
+CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- Criar usuário (usando as credenciais do seu config.php)
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' 
+IDENTIFIED BY '$DB_PASS';
+
+-- Conceder todos os privilégios
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* 
+TO '$DB_USER'@'localhost';
+
+-- Aplicar mudanças
+FLUSH PRIVILEGES;
+EOF
+
+    # 4. Importar o arquivo SQL COMPLETO do seu site
+    if sudo mysql "$DB_NAME" < "$SQL_FILE"; then
+        success "Estrutura completa do banco de dados importada com sucesso!"
+        
+        # 5. Atualizar email do admin para o email fornecido na instalação
+        log "Configurando usuário admin padrão..."
+        sudo mysql "$DB_NAME" <<EOF
+-- Atualizar email do admin
+UPDATE users SET email = '$EMAIL_ADMIN' WHERE username = 'admin';
+-- Nota: A senha padrão do admin é 'password' (hash já está no SQL)
+EOF
+        success "Banco de dados '$DB_NAME' configurado e pronto para uso!"
+    else
+        error "Falha ao importar o arquivo SQL: $SQL_FILE"
+        warn "Verifique se há erros de sintaxe no arquivo SQL."
+        warn "Criando estrutura básica como fallback..."
+        
+        # Fallback: criar estrutura básica
+        sudo mysql "$DB_NAME" <<EOF
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(50) NOT NULL UNIQUE,
+  email VARCHAR(100) NOT NULL UNIQUE,
+  password VARCHAR(255) NOT NULL,
+  role ENUM('user','admin','moderator') DEFAULT 'user',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO users (username, email, password, role) VALUES
+('admin', '$EMAIL_ADMIN', '\$2y\$10\$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin')
+ON DUPLICATE KEY UPDATE email='$EMAIL_ADMIN';
+EOF
+        success "Estrutura básica criada como fallback"
+    fi
 }
 
-# Configurar arquivo .env
+# Configurar arquivo .env usando o config.php como base
 setup_env_file() {
-    log "Configurando arquivo .env..."
+    log "Configurando configurações do sistema..."
     
-    ENV_FILE="$INSTALL_DIR/.env"
-    
-    # Verificar se existe arquivo de exemplo
-    if [ -f "$INSTALL_DIR/.env.example" ]; then
-        # Copiar arquivo de exemplo
-        cp "$INSTALL_DIR/.env.example" "$ENV_FILE"
+    # Verificar se config.php existe
+    CONFIG_FILE="$INSTALL_DIR/config.php"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        warn "Arquivo config.php não encontrado. Criando configurações básicas..."
         
-        # Substituir variáveis
-        sed -i "s|APP_URL=.*|APP_URL=https://${DOMAIN_NAME}|" "$ENV_FILE"
-        sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=${DB_PASSWORD}|" "$ENV_FILE"
-        sed -i "s|APP_KEY=.*|APP_KEY=${SECRET_KEY}|" "$ENV_FILE"
-        sed -i "s|JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|" "$ENV_FILE"
-        sed -i "s|ENCRYPTION_KEY=.*|ENCRYPTION_KEY=${ENCRYPTION_KEY}|" "$ENV_FILE"
-        sed -i "s|ADMIN_EMAIL=.*|ADMIN_EMAIL=${EMAIL_ADMIN}|" "$ENV_FILE"
-        
-        # Configurar Redis
-        sed -i "s|REDIS_HOST=.*|REDIS_HOST=localhost|" "$ENV_FILE"
-        sed -i "s|REDIS_PASSWORD=.*|REDIS_PASSWORD=|" "$ENV_FILE"
-        
-        success "Arquivo .env configurado"
-    else
-        # Criar .env básico se não existir exemplo
+        # Criar .env básico
+        ENV_FILE="$INSTALL_DIR/.env"
         cat > "$ENV_FILE" <<EOF
 APP_NAME=YouTube Audio Extractor
 APP_ENV=production
@@ -445,9 +482,9 @@ APP_URL=https://${DOMAIN_NAME}
 DB_CONNECTION=mysql
 DB_HOST=localhost
 DB_PORT=3306
-DB_DATABASE=youtube_extractor
-DB_USERNAME=youtube_user
-DB_PASSWORD=${DB_PASSWORD}
+DB_DATABASE=${DB_NAME}
+DB_USERNAME=${DB_USER}
+DB_PASSWORD=${DB_PASS}
 
 CACHE_DRIVER=file
 SESSION_DRIVER=file
@@ -458,8 +495,12 @@ ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
 ADMIN_EMAIL=${EMAIL_ADMIN}
 EOF
-        success "Arquivo .env criado"
+        success "Arquivo .env básico criado"
+        return 0
     fi
+    
+    # Se config.php existe, o sistema já está configurado
+    success "Configurações do sistema já definidas em config.php"
 }
 
 # Configurar Apache Virtual Host
@@ -532,6 +573,12 @@ setup_supervisor() {
     
     SUPERVISOR_CONF="/etc/supervisor/conf.d/youtube-worker.conf"
     
+    # Verificar se o script worker.py existe
+    if [ ! -f "$INSTALL_DIR/scripts/worker.py" ]; then
+        warn "Script worker.py não encontrado. Pulando configuração do Supervisor."
+        return 0
+    fi
+    
     cat > "$SUPERVISOR_CONF" <<EOF
 [program:youtube-downloader]
 command=/opt/youtube-venv/bin/python3 ${INSTALL_DIR}/scripts/worker.py
@@ -591,26 +638,17 @@ setup_permissions() {
     # Configurar permissões específicas
     chmod 755 "$INSTALL_DIR"
     
-    # Criar diretórios necessários
-    mkdir -p "$INSTALL_DIR/assets/uploads" "$INSTALL_DIR/logs" "$INSTALL_DIR/backup"
-    chmod -R 755 "$INSTALL_DIR/assets/uploads"
-    chmod -R 755 "$INSTALL_DIR/logs"
-    chmod -R 755 "$INSTALL_DIR/backup"
-    
-    # Arquivo .env
-    if [ -f "$INSTALL_DIR/.env" ]; then
-        chmod 640 "$INSTALL_DIR/.env"
-    fi
+    # Criar diretórios necessários se não existirem
+    mkdir -p "$INSTALL_DIR/assets/uploads" "$INSTALL_DIR/logs" "$INSTALL_DIR/backup" 2>/dev/null || true
+    chmod -R 755 "$INSTALL_DIR/assets/uploads" 2>/dev/null || true
+    chmod -R 755 "$INSTALL_DIR/logs" 2>/dev/null || true
+    chmod -R 755 "$INSTALL_DIR/backup" 2>/dev/null || true
     
     # Scripts executáveis
     if [ -d "$INSTALL_DIR/scripts" ]; then
         chmod +x "$INSTALL_DIR/scripts/"*.py 2>/dev/null || true
         chmod +x "$INSTALL_DIR/scripts/"*.sh 2>/dev/null || true
     fi
-    
-    # Proteger arquivos sensíveis
-    find "$INSTALL_DIR" -name "*.sql" -type f -exec chmod 600 {} \; 2>/dev/null || true
-    find "$INSTALL_DIR" -name "*.log" -type f -exec chmod 640 {} \; 2>/dev/null || true
     
     success "Permissões configuradas"
 }
@@ -626,7 +664,7 @@ setup_cron() {
 0 2 * * * www-data find ${INSTALL_DIR}/assets/uploads/temp -type f -mtime +1 -delete 2>/dev/null || true
 
 # Backup diário do banco de dados
-0 3 * * * www-data /usr/bin/mysqldump -u youtube_user -p${DB_PASSWORD} youtube_extractor | gzip > ${INSTALL_DIR}/backup/db_backup_\$(date +\%Y\%m\%d).sql.gz 2>/dev/null || true
+0 3 * * * www-data /usr/bin/mysqldump -u ${DB_USER} -p${DB_PASS} ${DB_NAME} | gzip > ${INSTALL_DIR}/backup/db_backup_\$(date +\%Y\%m\%d).sql.gz 2>/dev/null || true
 
 # Limpeza de backups antigos
 0 4 * * * www-data find ${INSTALL_DIR}/backup -name "*.gz" -mtime +7 -delete 2>/dev/null || true
@@ -668,18 +706,18 @@ LOG_FILE="${INSTALL_DIR}/logs/backup.log"
 echo "[\$(date)] Iniciando backup" >> "\$LOG_FILE"
 
 # Backup do banco de dados
-mysqldump -u youtube_user -p${DB_PASSWORD} youtube_extractor > "\$BACKUP_DIR/db_backup_\$DATE.sql"
-gzip "\$BACKUP_DIR/db_backup_\$DATE.sql"
+mysqldump -u ${DB_USER} -p${DB_PASS} ${DB_NAME} > "\$BACKUP_DIR/db_backup_\$DATE.sql" 2>/dev/null
+gzip "\$BACKUP_DIR/db_backup_\$DATE.sql" 2>/dev/null
 
 # Backup dos uploads (se existir)
 if [ -d "${INSTALL_DIR}/assets/uploads" ]; then
-    tar -czf "\$BACKUP_DIR/uploads_backup_\$DATE.tar.gz" -C "${INSTALL_DIR}/assets/uploads" .
+    tar -czf "\$BACKUP_DIR/uploads_backup_\$DATE.tar.gz" -C "${INSTALL_DIR}/assets/uploads" . 2>/dev/null
 fi
 
 # Backup dos arquivos de configuração
-tar -czf "\$BACKUP_DIR/config_backup_\$DATE.tar.gz" \
-    "${INSTALL_DIR}/.env" \
-    "/etc/apache2/sites-available/youtube-extractor.conf" \
+tar -czf "\$BACKUP_DIR/config_backup_\$DATE.tar.gz" \\
+    "${INSTALL_DIR}/config.php" \\
+    "/etc/apache2/sites-available/youtube-extractor.conf" \\
     "/etc/supervisor/conf.d/youtube-worker.conf" 2>/dev/null || true
 
 # Manter apenas últimos 10 backups
@@ -715,29 +753,31 @@ LOG_DIR="${INSTALL_DIR}/logs"
 DATE=\$(date +%Y%m%d)
 
 # Verificar espaço em disco
-DISK_USAGE=\$(df -h / | awk 'NR==2 {print \$(NF-1)}' | sed 's/%//')
-if [ \$DISK_USAGE -gt 90 ]; then
+DISK_USAGE=\$(df -h / | awk 'NR==2 {print \$(NF-1)}' | sed 's/%//' 2>/dev/null)
+if [ -n "\$DISK_USAGE" ] && [ "\$DISK_USAGE" -gt 90 ]; then
     echo "[\$(date)] ALERTA: Uso de disco em \$DISK_USAGE%" >> "\$LOG_DIR/alert_\$DATE.log"
 fi
 
 # Verificar memória
-MEM_USAGE=\$(free | awk 'NR==2 {printf "%.0f", \$3/\$2 * 100}')
-if [ \$MEM_USAGE -gt 90 ]; then
+MEM_USAGE=\$(free | awk 'NR==2 {printf "%.0f", \$3/\$2 * 100}' 2>/dev/null)
+if [ -n "\$MEM_USAGE" ] && [ "\$MEM_USAGE" -gt 90 ]; then
     echo "[\$(date)] ALERTA: Uso de memória em \$MEM_USAGE%" >> "\$LOG_DIR/alert_\$DATE.log"
 fi
 
 # Verificar serviços
-for SERVICE in apache2 mysql redis-server supervisor; do
-    if ! systemctl is-active --quiet \$SERVICE; then
+for SERVICE in apache2 mariadb redis-server supervisor; do
+    if ! systemctl is-active --quiet \$SERVICE 2>/dev/null; then
         echo "[\$(date)] ALERTA: Serviço \$SERVICE parado" >> "\$LOG_DIR/alert_\$DATE.log"
-        systemctl restart \$SERVICE
+        systemctl restart \$SERVICE 2>/dev/null || true
     fi
 done
 
 # Verificar workers do Supervisor
-if ! supervisorctl status | grep -q "RUNNING"; then
+if supervisorctl status 2>/dev/null | grep -q "RUNNING"; then
+    true
+else
     echo "[\$(date)] ALERTA: Workers parados" >> "\$LOG_DIR/alert_\$DATE.log"
-    supervisorctl restart all
+    supervisorctl restart all 2>/dev/null || true
 fi
 EOF
     fi
@@ -770,10 +810,10 @@ test_installation() {
     fi
     
     # Testar MySQL
-    if systemctl is-active --quiet mysql; then
-        success "✓ MySQL está rodando"
+    if systemctl is-active --quiet mariadb; then
+        success "✓ MySQL/MariaDB está rodando"
     else
-        error "✗ MySQL não está rodando"
+        error "✗ MySQL/MariaDB não está rodando"
     fi
     
     # Testar Redis
@@ -813,16 +853,16 @@ test_installation() {
     
     # Testar acesso ao site
     if curl -s -o /dev/null -w "%{http_code}" "http://localhost" | grep -q "200\|302"; then
-        success "✓ Site está acessível"
+        success "✓ Site está acessível localmente"
     else
-        warn "⚠ Site pode não estar acessível"
+        warn "⚠ Site pode não estar acessível localmente"
     fi
     
-    # Testar se o site foi extraído
-    if [ -f "$INSTALL_DIR/index.php" ] || [ -f "$INSTALL_DIR/index.html" ]; then
-        success "✓ Site extraído e instalado"
+    # Testar banco de dados
+    if sudo mysql -e "USE $DB_NAME; SELECT 1;" &> /dev/null; then
+        success "✓ Banco de dados '$DB_NAME' está acessível"
     else
-        warn "⚠ Site pode não ter sido extraído corretamente"
+        error "✗ Banco de dados '$DB_NAME' não está acessível"
     fi
     
     echo "========================================"
@@ -840,57 +880,56 @@ show_summary() {
     echo "🌐 Domínio:              ${DOMAIN_NAME}"
     echo "📁 Diretório:            ${INSTALL_DIR}"
     echo "📧 Email Admin:          ${EMAIL_ADMIN}"
-    echo "🔑 Senha Admin:          ${ADMIN_PASSWORD}"
-    echo "🗄️  Banco de Dados:      youtube_extractor"
-    echo "👤 Usuário DB:           youtube_user"
-    echo "🔒 Senha DB:             ${DB_PASSWORD}"
-    echo "🔑 Chave Secreta:        ${SECRET_KEY:0:20}..."
+    echo "🔑 Senha Admin:          password (padrão - altere!)"
+    echo "🗄️  Banco de Dados:      ${DB_NAME}"
+    echo "👤 Usuário DB:           ${DB_USER}"
+    echo "🔒 Senha DB:             ${DB_PASS}"
     echo ""
     echo "🔧 SERVIÇOS INSTALADOS:"
     echo "----------------------------------------"
     echo "✅ Apache 2.4"
-    echo "✅ MySQL 8.0"
+    echo "✅ MariaDB (MySQL)"
     echo "✅ PHP 8.2"
     echo "✅ Redis"
     echo "✅ Python 3 + Virtual Env"
-    echo "✅ yt-dlp"
+    echo "✅ yt-dlp (com Celery 5.3+)"
     echo "✅ FFmpeg"
     echo "✅ Spleeter (IA)"
     echo "✅ TensorFlow"
     echo "✅ Supervisor"
-    echo "✅ Certbot (SSL)"
+    echo "✅ Certbot (SSL pronto)"
     echo ""
     echo "🚀 URLs DE ACESSO:"
     echo "----------------------------------------"
     echo "🌍 Site Principal:       http://${DOMAIN_NAME}"
-    echo "⚡ Painel Admin:          http://${DOMAIN_NAME}/admin.php"
-    echo "🛠️  Status Servidores:    http://${DOMAIN_NAME}/status.php"
+    echo "🔒 Site com SSL:         https://${DOMAIN_NAME} (após configurar DNS)"
     echo ""
     echo "📊 INFORMAÇÕES IMPORTANTES:"
     echo "----------------------------------------"
-    echo "1. Configure o DNS do domínio para apontar para este servidor"
-    echo "2. Execute 'certbot --apache' para configurar SSL"
-    echo "3. Altere a senha do admin no primeiro acesso"
-    echo "4. Configure backups regulares"
-    echo "5. Monitore os logs em: ${INSTALL_DIR}/logs/"
+    echo "1. Configure o DNS do domínio para apontar para o IP do servidor"
+    echo "2. Acesse o site e faça login com:"
+    echo "   Usuário: admin"
+    echo "   Senha: password (ALTERE NO PRIMEIRO ACESSO!)"
+    echo "3. Configure backups regulares"
+    echo "4. Monitore os logs em: ${INSTALL_DIR}/logs/"
     echo ""
     echo "🛡️  CREDENCIAIS DE ACESSO:"
     echo "----------------------------------------"
     echo "Painel Admin:"
     echo "  Usuário: admin"
-    echo "  Senha: ${ADMIN_PASSWORD}"
+    echo "  Senha: password (altere imediatamente!)"
     echo ""
     echo "Banco de Dados:"
     echo "  Host: localhost"
-    echo "  Usuário: youtube_user"
-    echo "  Senha: ${DB_PASSWORD}"
-    echo "  Banco: youtube_extractor"
+    echo "  Usuário: ${DB_USER}"
+    echo "  Senha: ${DB_PASS}"
+    echo "  Banco: ${DB_NAME}"
     echo ""
     echo "⚠️  IMPORTANTE:"
     echo "----------------------------------------"
-    echo "1. Salve estas credenciais em um local seguro!"
-    echo "2. Altere todas as senhas após o primeiro acesso"
-    echo "3. Configure firewall e segurança adicional"
+    echo "1. Altere a senha do admin no primeiro acesso!"
+    echo "2. Configure firewall adequadamente"
+    echo "3. Mantenha o sistema atualizado"
     echo "4. Faça backup regular dos dados"
     echo ""
     echo "📞 SUPORTE:"
@@ -901,14 +940,14 @@ show_summary() {
     echo "🔄 COMANDOS ÚTEIS:"
     echo "----------------------------------------"
     echo "Reiniciar serviços:"
-    echo "  sudo systemctl restart apache2 mysql redis"
+    echo "  sudo systemctl restart apache2 mariadb redis"
     echo ""
     echo "Verificar status:"
-    echo "  sudo systemctl status apache2 mysql redis supervisor"
+    echo "  sudo systemctl status apache2 mariadb redis supervisor"
     echo ""
     echo "Monitorar logs:"
     echo "  tail -f ${INSTALL_DIR}/logs/process.log"
-    echo "  tail -f ${INSTALL_DIR}/logs/worker.log"
+    echo "  tail -f /var/log/apache2/youtube-error.log"
     echo ""
     echo "Backup manual:"
     echo "  sudo bash ${INSTALL_DIR}/scripts/backup.sh"
@@ -935,14 +974,14 @@ show_banner() {
     echo "║                                                              ║"
     echo "║               YouTube Audio Extractor                         ║"
     echo "║               Instalador Automático v2.1                      ║"
-    echo "║                    (COM SITE ZIP)                            ║"
+    echo "║                  (com site ZIP)                              ║"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     echo ""
 }
 
-# Coletar informações do usuário (SIMPLIFICADA)
+# Coletar informações do usuário
 collect_info() {
     show_banner
     
@@ -987,6 +1026,7 @@ collect_info() {
     echo "  Email Admin: $EMAIL_ADMIN"
     echo "  Diretório: $INSTALL_DIR"
     echo "  Site: Baixado do GitHub (ZIP)"
+    echo "  Banco: $DB_NAME (usuário: $DB_USER)"
     echo ""
     
     if ! confirm "Deseja continuar com estas configurações?"; then
@@ -1022,8 +1062,8 @@ main_installation() {
     install_certbot
     setup_firewall
     
-    # 5. Baixar e extrair site do ZIP (MODIFICADO)
-    download_and_extract_site
+    # 5. Baixar e extrair site do ZIP
+    clone_repository
     
     # 6. Configurar sistema
     setup_database
@@ -1048,6 +1088,7 @@ main_installation() {
     log "Instalação concluída com sucesso!"
     echo ""
     info "Acesse o sistema em: http://${DOMAIN_NAME}"
+    info "Login: admin / password (ALTERE ESTA SENHA!)"
     echo ""
 }
 
@@ -1068,49 +1109,37 @@ DATA DA INSTALAÇÃO: $(date)
 ACESSO AO SISTEMA:
 ------------------
 URL: https://${DOMAIN_NAME}
-Painel Admin: https://${DOMAIN_NAME}/admin
 Usuário: admin
-Senha: ${ADMIN_PASSWORD}
+Senha: password (ALTERE IMEDIATAMENTE!)
 
 BANCO DE DADOS:
 ---------------
 Host: localhost
-Usuário: youtube_user
-Senha: ${DB_PASSWORD}
-Banco: youtube_extractor
+Usuário: ${DB_USER}
+Senha: ${DB_PASS}
+Banco: ${DB_NAME}
 
-CHAVES DE SEGURANÇA:
--------------------
-APP_KEY: ${SECRET_KEY}
-JWT_SECRET: ${JWT_SECRET}
-ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-
-DIRETÓRIOS IMPORTANTES:
-----------------------
-Instalação: ${INSTALL_DIR}
+CONFIGURAÇÕES DO SISTEMA:
+------------------------
+Diretório: ${INSTALL_DIR}
 Logs: ${INSTALL_DIR}/logs/
 Backups: ${INSTALL_DIR}/backup/
 Uploads: ${INSTALL_DIR}/assets/uploads/
 
 COMANDOS ÚTEIS:
 ---------------
-Reiniciar serviços: sudo systemctl restart apache2 mysql redis supervisor
-Verificar status: sudo systemctl status apache2 mysql redis supervisor
+Reiniciar serviços: sudo systemctl restart apache2 mariadb redis
+Verificar status: sudo systemctl status apache2 mariadb redis supervisor
 Monitorar logs: tail -f ${INSTALL_DIR}/logs/process.log
 Backup manual: sudo bash ${INSTALL_DIR}/scripts/backup.sh
 
 SEGURANÇA:
 ---------
-1. Altere todas as senhas após o primeiro acesso
+1. ALTERE A SENHA DO ADMIN NO PRIMEIRO ACESSO!
 2. Configure firewall adequadamente
 3. Mantenha o sistema atualizado
 4. Faça backups regulares
 5. Monitore os logs diariamente
-
-SUPORTE:
---------
-Documentação: ${INSTALL_DIR}/README.md
-Logs do sistema: ${INSTALL_DIR}/logs/
 
 ========================================
 IMPORTANTE: EXCLUA ESTE ARQUIVO APÓS ANOTAR AS CREDENCIAIS
