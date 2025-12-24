@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # YouTube Audio Extractor - Instalador Automático Completo
-# Versão: 2.0.3
+# Versão: 2.0.4
 # Autor: Sistema YouTube Audio Extractor
 
 set -e
@@ -30,7 +30,6 @@ ADMIN_PASSWORD=$(openssl rand -base64 12)
 SECRET_KEY=$(openssl rand -base64 48)
 JWT_SECRET=$(openssl rand -base64 48)
 ENCRYPTION_KEY=$(openssl rand -base64 32)
-CURRENT_DB_PASS=""
 
 # ============================================================================
 # FUNÇÕES UTILITÁRIAS
@@ -75,71 +74,6 @@ check_internet() {
         exit 1
     fi
     success "Conexão com internet OK"
-}
-
-# Função para obter IP público - CORRIGIDA
-get_public_ip() {
-    local ip=""
-    
-    # Tentar múltiplos serviços com timeout
-    local services=(
-        "https://api.ipify.org"
-        "https://icanhazip.com"
-        "https://ifconfig.me"
-        "https://ipecho.net/plain"
-        "https://checkip.amazonaws.com"
-    )
-    
-    for service in "${services[@]}"; do
-        ip=$(curl -s --max-time 5 "$service" 2>/dev/null | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-        if [[ -n "$ip" ]] && [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "$ip"
-            return 0
-        fi
-    done
-    
-    # Se todos falharem, tentar obter IP local
-    ip=$(hostname -I | awk '{print $1}' 2>/dev/null)
-    if [[ -n "$ip" ]]; then
-        echo "$ip"
-    else
-        echo "127.0.0.1"
-    fi
-}
-
-# Função para perguntar confirmação
-confirm() {
-    read -p "$1 (s/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Ss]$ ]]; then
-        return 1
-    fi
-    return 0
-}
-
-# Função para validar domínio
-validate_domain() {
-    local domain=$1
-    if [[ $domain =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Função para validar email
-validate_email() {
-    local email=$1
-    if [[ $email =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Limpar tela
-clear_screen() {
-    clear
 }
 
 # ============================================================================
@@ -208,13 +142,16 @@ install_apache() {
     fi
 }
 
-# Instalar MySQL/MariaDB - CORRIGIDA
+# Instalar MySQL/MariaDB - CORRIGIDA PARA UBUNTU
 install_mysql() {
     log "Instalando MariaDB (compatível com MySQL)..."
     
     # Verificar se já está instalado
     if command -v mysql &> /dev/null || command -v mariadb &> /dev/null; then
         warn "MariaDB/MySQL já está instalado. Pulando instalação..."
+        
+        # Tentar configurar senha se não estiver configurada
+        log "Verificando configuração do MySQL..."
         return 0
     fi
     
@@ -227,25 +164,13 @@ install_mysql() {
     # Esperar um pouco para o MySQL iniciar
     sleep 5
     
-    # Configurar inicialização segura
-    log "Configurando segurança básica do MariaDB..."
+    success "MariaDB instalado"
     
-    # Verificar se podemos acessar sem senha
-    if mysql -u root -e "SELECT 1;" &> /dev/null; then
-        mysql -u root <<EOF
-ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
-DELETE FROM mysql.user WHERE User='';
-DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-FLUSH PRIVILEGES;
-EOF
-        success "MariaDB instalado e senha do root configurada"
-    else
-        warn "MariaDB já tem senha configurada. Configure manualmente se necessário."
-        info "Execute: sudo mysql_secure_installation"
-        info "Ou tente acessar com: sudo mysql"
-    fi
+    # IMPORTANTE: No Ubuntu, o MariaDB vem configurado para usar autenticação via socket
+    # O usuário root pode acessar apenas com sudo mysql (sem senha)
+    info "No Ubuntu, o MariaDB usa autenticação via socket por padrão"
+    info "Para acessar: sudo mysql (sem senha)"
+    info "Para configurar senha, execute: sudo mysql_secure_installation"
 }
 
 # Instalar PHP - CORRIGIDA
@@ -385,7 +310,7 @@ install_python() {
     success "Python e dependências instaladas"
 }
 
-# Instalar Node.js (opcional) - CORRIGIDA
+# Instalar Node.js (opcional) - SIMPLIFICADA
 install_nodejs() {
     log "Instalando Node.js (opcional)..."
     
@@ -394,81 +319,11 @@ install_nodejs() {
         return 0
     fi
     
-    # Verificar se há pacotes Node.js quebrados
-    log "Verificando pacotes Node.js existentes..."
-    
-    # Remover pacotes Node.js problemáticos se existirem
-    if dpkg -l | grep -q nodejs || dpkg -l | grep -q npm; then
-        warn "Removendo pacotes Node.js problemáticos..."
-        apt remove --purge -y nodejs npm nodejs-dev 2>/dev/null || true
-        apt autoremove -y
-        apt clean
-    fi
-    
-    # Instalar Node.js usando NodeSource (método alternativo)
-    log "Instalando Node.js via NodeSource..."
-    
-    # Instalar dependências necessárias
-    apt install -y curl dirmngr apt-transport-https lsb-release ca-certificates
-    
-    # Adicionar repositório NodeSource para Node.js 18.x (LTS)
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-    
-    # Atualizar cache de pacotes
-    apt update
-    
-    # Instalar Node.js
-    if apt install -y nodejs; then
-        success "Node.js instalado com sucesso"
-        
-        # Verificar instalação
-        if command -v node &> /dev/null; then
-            info "Node.js versão: $(node --version)"
-            info "npm versão: $(npm --version 2>/dev/null || echo 'não disponível')"
-        fi
+    # Tentar instalar via apt (método mais simples)
+    if apt install -y nodejs npm 2>/dev/null; then
+        success "Node.js instalado"
     else
-        warn "Falha na instalação do Node.js via apt"
-        warn "Tentando instalação alternativa..."
-        
-        # Método alternativo: instalar Node.js via nvm (Node Version Manager)
-        if install_nodejs_nvm; then
-            success "Node.js instalado via nvm"
-        else
-            error "Não foi possível instalar Node.js"
-            warn "Node.js não é essencial para o sistema, continuando sem ele..."
-            return 1
-        fi
-    fi
-}
-
-# Instalar Node.js via nvm (fallback)
-install_nodejs_nvm() {
-    log "Instalando Node.js via nvm..."
-    
-    # Instalar nvm
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-    
-    # Carregar nvm no shell atual
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-    [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
-    
-    # Instalar Node.js LTS
-    if nvm install --lts; then
-        # Configurar Node.js LTS como padrão
-        nvm use --lts
-        nvm alias default 'lts/*'
-        
-        # Adicionar ao PATH do sistema
-        echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc
-        echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
-        echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"' >> ~/.bashrc
-        
-        # Recarregar .bashrc
-        source ~/.bashrc
-        
-        return 0
-    else
+        warn "Não foi possível instalar Node.js. Pulando..."
         return 1
     fi
 }
@@ -500,39 +355,11 @@ install_certbot() {
     fi
 }
 
-# Configurar firewall
-setup_firewall() {
-    log "Configurando firewall (UFW)..."
-    
-    if command -v ufw &> /dev/null; then
-        if ufw status | grep -q "active"; then
-            warn "UFW já está ativo"
-        else
-            # Instalar UFW se não estiver instalado
-            if ! dpkg -l | grep -q ufw; then
-                apt install -y ufw
-            fi
-            
-            # Configurar regras básicas
-            ufw allow 22/tcp comment 'SSH'
-            ufw allow 80/tcp comment 'HTTP'
-            ufw allow 443/tcp comment 'HTTPS'
-            
-            # Habilitar UFW
-            echo "y" | ufw enable
-            
-            success "Firewall configurado"
-        fi
-    else
-        warn "UFW não está disponível, pulando configuração de firewall"
-    fi
-}
-
 # ============================================================================
-# CONFIGURAÇÃO DO SISTEMA
+# CONFIGURAÇÃO DO SISTEMA - CORRIGIDA PARA MYSQL
 # ============================================================================
 
-# Verificar acesso ao MySQL
+# Verificar e configurar acesso ao MySQL - CORRIGIDA
 check_mysql_access() {
     log "Verificando acesso ao MySQL/MariaDB..."
     
@@ -542,58 +369,181 @@ check_mysql_access() {
         return 0
     fi
     
-    # Tentar acessar com sudo (para MariaDB no Ubuntu)
+    # Tentar acessar com sudo (para MariaDB no Ubuntu - autenticação via socket)
     if sudo mysql -e "SELECT 1;" &> /dev/null; then
-        info "MySQL acessível com sudo"
+        info "MySQL acessível com sudo (autenticação via socket)"
         return 0
     fi
     
-    # Pedir senha ao usuário
-    echo ""
+    # Se não conseguir, vamos reconfigurar o MySQL
     warn "Não foi possível acessar o MySQL automaticamente."
-    echo "Para continuar, precisamos da senha do root do MySQL."
     echo ""
-    echo "Se você não sabe a senha, tente:"
-    echo "1. Senha em branco (pressione Enter)"
-    echo "2. A senha que você configurou anteriormente"
-    echo "3. Para MariaDB no Ubuntu, tente acessar com: sudo mysql"
+    echo "Vamos reconfigurar o MySQL para permitir acesso:"
     echo ""
     
-    local attempts=0
-    while [ $attempts -lt 3 ]; do
-        read -s -p "Digite a senha do root do MySQL (ou Enter para tentar sem senha): " CURRENT_DB_PASS
+    # Parar MySQL temporariamente
+    systemctl stop mysql 2>/dev/null || systemctl stop mariadb 2>/dev/null
+    
+    # Iniciar MySQL em modo seguro (sem autenticação)
+    log "Iniciando MySQL em modo seguro..."
+    mysqld_safe --skip-grant-tables --skip-networking &
+    sleep 5
+    
+    # Configurar nova senha
+    log "Configurando nova senha para root..."
+    mysql -u root <<EOF
+FLUSH PRIVILEGES;
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
+FLUSH PRIVILEGES;
+EOF
+    
+    # Parar MySQL seguro
+    killall mysqld_safe 2>/dev/null || true
+    killall mysqld 2>/dev/null || true
+    
+    # Iniciar MySQL normalmente
+    systemctl start mysql 2>/dev/null || systemctl start mariadb 2>/dev/null
+    sleep 3
+    
+    # Testar nova conexão
+    if mysql -u root -p"${DB_PASSWORD}" -e "SELECT 1;" &> /dev/null; then
+        info "MySQL reconfigurado com sucesso"
+        info "Nova senha do root: ${DB_PASSWORD}"
+        return 0
+    else
+        error "Falha ao reconfigurar MySQL"
+        return 1
+    fi
+}
+
+# Configurar banco de dados - CORRIGIDA
+setup_database() {
+    log "Configurando banco de dados..."
+    
+    # Verificar e configurar acesso ao MySQL
+    if ! check_mysql_access; then
+        error "Não foi possível configurar acesso ao MySQL"
         echo ""
+        echo "Soluções manuais:"
+        echo "1. Execute: sudo mysql_secure_installation"
+        echo "2. Ou: sudo mysql -e \"ALTER USER 'root'@'localhost' IDENTIFIED BY 'nova_senha';\""
+        echo "3. Depois execute novamente esta etapa"
+        echo ""
+        read -p "Pressione Enter após configurar o MySQL manualmente..."
         
-        if [ -z "$CURRENT_DB_PASS" ]; then
-            if mysql -u root -e "SELECT 1;" &> /dev/null; then
-                info "Conexão bem-sucedida sem senha"
-                return 0
-            fi
-        else
-            if mysql -u root -p"${CURRENT_DB_PASS}" -e "SELECT 1;" &> /dev/null; then
-                info "Conexão bem-sucedida com senha"
-                return 0
-            fi
+        # Tentar novamente após configuração manual
+        if ! mysql -u root -p"${DB_PASSWORD}" -e "SELECT 1;" &> /dev/null; then
+            error "Ainda não foi possível conectar ao MySQL"
+            return 1
         fi
-        
-        ((attempts++))
-        error "Senha incorreta ou não foi possível conectar ao MySQL (tentativa $attempts/3)"
-        
-        if [ $attempts -lt 3 ]; then
-            if ! confirm "Deseja tentar novamente?"; then
-                break
-            fi
-        fi
-    done
+    fi
     
-    error "Não foi possível conectar ao MySQL após $attempts tentativas"
-    echo ""
-    echo "Soluções possíveis:"
-    echo "1. Execute 'sudo mysql_secure_installation' para reconfigurar o MySQL"
-    echo "2. Reinicie o MySQL: sudo systemctl restart mysql"
-    echo "3. Tente acessar manualmente e depois execute novamente este script"
-    echo ""
-    return 1
+    # Determinar método de acesso
+    if mysql -u root -e "SELECT 1;" &> /dev/null; then
+        MYSQL_CMD="mysql -u root"
+    elif sudo mysql -e "SELECT 1;" &> /dev/null; then
+        MYSQL_CMD="sudo mysql"
+    elif mysql -u root -p"${DB_PASSWORD}" -e "SELECT 1;" &> /dev/null; then
+        MYSQL_CMD="mysql -u root -p${DB_PASSWORD}"
+    else
+        error "Não foi possível determinar método de acesso ao MySQL"
+        return 1
+    fi
+    
+    # Criar banco de dados
+    log "Criando banco de dados 'youtube_extractor'..."
+    
+    $MYSQL_CMD <<EOF
+CREATE DATABASE IF NOT EXISTS youtube_extractor 
+CHARACTER SET utf8mb4 
+COLLATE utf8mb4_unicode_ci;
+
+CREATE USER IF NOT EXISTS 'youtube_user'@'localhost' 
+IDENTIFIED BY '${DB_PASSWORD}';
+
+GRANT ALL PRIVILEGES ON youtube_extractor.* 
+TO 'youtube_user'@'localhost';
+
+FLUSH PRIVILEGES;
+EOF
+    
+    # Importar estrutura do banco se existir
+    if [ -f "$INSTALL_DIR/sql/database.sql" ]; then
+        log "Importando estrutura do banco de dados..."
+        $MYSQL_CMD youtube_extractor < "$INSTALL_DIR/sql/database.sql"
+    elif [ -f "$INSTALL_DIR/database.sql" ]; then
+        log "Importando estrutura do banco de dados..."
+        $MYSQL_CMD youtube_extractor < "$INSTALL_DIR/database.sql"
+    else
+        # Criar estrutura básica se não existir arquivo SQL
+        log "Criando estrutura básica do banco de dados..."
+        
+        $MYSQL_CMD youtube_extractor <<EOF
+-- Tabela de usuários
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(100),
+    is_admin BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Tabela de downloads
+CREATE TABLE IF NOT EXISTS downloads (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    youtube_url TEXT NOT NULL,
+    video_title VARCHAR(255),
+    video_author VARCHAR(255),
+    audio_format VARCHAR(10) DEFAULT 'mp3',
+    bitrate INT DEFAULT 192,
+    status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
+    file_path VARCHAR(500),
+    file_size BIGINT,
+    duration INT,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP NULL,
+    INDEX idx_user_id (user_id),
+    INDEX idx_status (status),
+    INDEX idx_created_at (created_at),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Tabela de configurações
+CREATE TABLE IF NOT EXISTS settings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    setting_key VARCHAR(100) NOT NULL UNIQUE,
+    setting_value TEXT,
+    description VARCHAR(255),
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Inserir usuário admin (usando senha hasheada com SHA2)
+INSERT INTO users (username, password, email, is_admin) 
+VALUES ('admin', SHA2('${ADMIN_PASSWORD}', 256), '${EMAIL_ADMIN}', TRUE)
+ON DUPLICATE KEY UPDATE password = SHA2('${ADMIN_PASSWORD}', 256);
+
+-- Inserir configurações padrão
+INSERT INTO settings (setting_key, setting_value, description) VALUES
+('site_name', 'YouTube Audio Extractor', 'Nome do site'),
+('max_file_size', '2147483648', 'Tamanho máximo de arquivo em bytes (2GB)'),
+('allowed_formats', 'mp3,wav,flac,aac', 'Formatos de áudio permitidos'),
+('default_bitrate', '192', 'Bitrate padrão para MP3'),
+('concurrent_downloads', '3', 'Número máximo de downloads simultâneos'),
+('retention_days', '7', 'Dias para manter arquivos antigos'),
+('maintenance_mode', '0', 'Modo manutenção (0=off, 1=on)')
+ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
+EOF
+    fi
+    
+    success "Banco de dados configurado com sucesso"
+    info "  Banco: youtube_extractor"
+    info "  Usuário: youtube_user"
+    info "  Senha: ${DB_PASSWORD}"
+    info "  Senha do admin: ${ADMIN_PASSWORD}"
 }
 
 # Clonar repositório
@@ -760,125 +710,6 @@ EOF
         
         info "Estrutura básica criada em: $INSTALL_DIR"
     fi
-}
-
-# Configurar banco de dados
-setup_database() {
-    log "Configurando banco de dados..."
-    
-    # Verificar acesso ao MySQL
-    if ! check_mysql_access; then
-        error "Não foi possível configurar o banco de dados"
-        warn "Configure o MySQL manualmente e execute novamente esta etapa"
-        return 1
-    fi
-    
-    # Preparar opção de senha para comandos MySQL
-    if [ -z "$CURRENT_DB_PASS" ]; then
-        MYSQL_CMD="mysql -u root"
-    else
-        MYSQL_CMD="mysql -u root -p${CURRENT_DB_PASS}"
-    fi
-    
-    # Criar banco de dados
-    log "Criando banco de dados 'youtube_extractor'..."
-    
-    $MYSQL_CMD <<EOF
-CREATE DATABASE IF NOT EXISTS youtube_extractor 
-CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
-
-CREATE USER IF NOT EXISTS 'youtube_user'@'localhost' 
-IDENTIFIED BY '${DB_PASSWORD}';
-
-GRANT ALL PRIVILEGES ON youtube_extractor.* 
-TO 'youtube_user'@'localhost';
-
-FLUSH PRIVILEGES;
-EOF
-    
-    # Importar estrutura do banco se existir
-    if [ -f "$INSTALL_DIR/sql/database.sql" ]; then
-        log "Importando estrutura do banco de dados..."
-        $MYSQL_CMD youtube_extractor < "$INSTALL_DIR/sql/database.sql"
-    elif [ -f "$INSTALL_DIR/database.sql" ]; then
-        log "Importando estrutura do banco de dados..."
-        $MYSQL_CMD youtube_extractor < "$INSTALL_DIR/database.sql"
-    else
-        # Criar estrutura básica se não existir arquivo SQL
-        log "Criando estrutura básica do banco de dados..."
-        
-        $MYSQL_CMD youtube_extractor <<EOF
--- Tabela de usuários
-CREATE TABLE IF NOT EXISTS users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(50) NOT NULL UNIQUE,
-    password VARCHAR(255) NOT NULL,
-    email VARCHAR(100),
-    is_admin BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
--- Tabela de downloads
-CREATE TABLE IF NOT EXISTS downloads (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT,
-    youtube_url TEXT NOT NULL,
-    video_title VARCHAR(255),
-    video_author VARCHAR(255),
-    audio_format VARCHAR(10) DEFAULT 'mp3',
-    bitrate INT DEFAULT 192,
-    status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
-    file_path VARCHAR(500),
-    file_size BIGINT,
-    duration INT,
-    error_message TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    completed_at TIMESTAMP NULL,
-    INDEX idx_user_id (user_id),
-    INDEX idx_status (status),
-    INDEX idx_created_at (created_at),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
--- Tabela de configurações
-CREATE TABLE IF NOT EXISTS settings (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    setting_key VARCHAR(100) NOT NULL UNIQUE,
-    setting_value TEXT,
-    description VARCHAR(255),
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
--- Inserir usuário admin
-INSERT INTO users (username, password, email, is_admin) 
-VALUES ('admin', SHA2('${ADMIN_PASSWORD}', 256), '${EMAIL_ADMIN}', TRUE)
-ON DUPLICATE KEY UPDATE password = SHA2('${ADMIN_PASSWORD}', 256);
-
--- Inserir configurações padrão
-INSERT INTO settings (setting_key, setting_value, description) VALUES
-('site_name', 'YouTube Audio Extractor', 'Nome do site'),
-('max_file_size', '2147483648', 'Tamanho máximo de arquivo em bytes (2GB)'),
-('allowed_formats', 'mp3,wav,flac,aac', 'Formatos de áudio permitidos'),
-('default_bitrate', '192', 'Bitrate padrão para MP3'),
-('concurrent_downloads', '3', 'Número máximo de downloads simultâneos'),
-('retention_days', '7', 'Dias para manter arquivos antigos'),
-('maintenance_mode', '0', 'Modo manutenção (0=off, 1=on)')
-ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
-EOF
-    fi
-    
-    # Atualizar senha do admin se já existir
-    $MYSQL_CMD youtube_extractor <<EOF
-UPDATE users SET password = SHA2('${ADMIN_PASSWORD}', 256) 
-WHERE username = 'admin';
-EOF
-    
-    success "Banco de dados configurado com sucesso"
-    info "  Banco: youtube_extractor"
-    info "  Usuário: youtube_user"
-    info "  Senha: ${DB_PASSWORD}"
 }
 
 # Configurar arquivo .env
@@ -1067,11 +898,8 @@ EOF
 
 # Configurar SSL (se domínio válido)
 setup_ssl() {
-    if validate_domain "$DOMAIN_NAME"; then
+    if [[ "$DOMAIN_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
         log "Configurando SSL com Let's Encrypt..."
-        
-        # Verificar se o domínio aponta para este servidor
-        log "Verificando se o domínio $DOMAIN_NAME aponta para este servidor..."
         
         # Tentar obter certificado SSL
         if certbot --apache \
@@ -1079,10 +907,7 @@ setup_ssl() {
             --non-interactive \
             --agree-tos \
             --email "$EMAIL_ADMIN" \
-            --redirect \
-            --hsts \
-            --uir \
-            --staple-ocsp; then
+            --redirect; then
             success "SSL configurado com sucesso para $DOMAIN_NAME"
             
             # Agendar renovação automática
@@ -1207,7 +1032,7 @@ def main():
             logger.debug("Worker rodando...")
             
         except KeyboardInterrupt:
-            logger.info("Worker interrompido pelo usuário"
+            logger.info("Worker interrompido pelo usuário")
             break
         except Exception as e:
             logger.error(f"Erro no worker: {e}")
@@ -1240,38 +1065,6 @@ stderr_logfile=${INSTALL_DIR}/logs/worker-error.log
 stderr_logfile_maxbytes=10MB
 stderr_logfile_backups=5
 environment=HOME="/var/www",USER="www-data",PATH="/usr/bin:/usr/local/bin:/opt/youtube-venv/bin",PYTHONPATH="${INSTALL_DIR}"
-
-[program:youtube-celery]
-command=/opt/youtube-venv/bin/celery -A worker.celery worker --loglevel=info --concurrency=3
-directory=${INSTALL_DIR}
-user=www-data
-group=www-data
-autostart=true
-autorestart=true
-startretries=3
-startsecs=10
-stopwaitsecs=30
-redirect_stderr=true
-stdout_logfile=${INSTALL_DIR}/logs/celery.log
-stdout_logfile_maxbytes=10MB
-stdout_logfile_backups=5
-environment=HOME="/var/www",USER="www-data",PATH="/usr/bin:/usr/local/bin:/opt/youtube-venv/bin",PYTHONPATH="${INSTALL_DIR}"
-
-[program:youtube-beat]
-command=/opt/youtube-venv/bin/celery -A worker.celery beat --loglevel=info
-directory=${INSTALL_DIR}
-user=www-data
-group=www-data
-autostart=true
-autorestart=true
-startretries=3
-startsecs=10
-stopwaitsecs=30
-redirect_stderr=true
-stdout_logfile=${INSTALL_DIR}/logs/celery-beat.log
-stdout_logfile_maxbytes=10MB
-stdout_logfile_backups=5
-environment=HOME="/var/www",USER="www-data",PATH="/usr/bin:/usr/local/bin:/opt/youtube-venv/bin",PYTHONPATH="${INSTALL_DIR}"
 EOF
     
     # Recarregar configurações do Supervisor
@@ -1280,8 +1073,6 @@ EOF
     
     # Iniciar serviços
     supervisorctl start youtube-downloader
-    supervisorctl start youtube-celery
-    supervisorctl start youtube-beat
     
     success "Supervisor configurado para workers"
 }
@@ -1342,9 +1133,6 @@ setup_cron() {
 
 # Verificação de saúde do sistema (a cada 15 minutos)
 */15 * * * * www-data ${INSTALL_DIR}/scripts/health_check.sh > /dev/null 2>&1
-
-# Sincronização de estatísticas (a cada hora)
-0 * * * * www-data php ${INSTALL_DIR}/scripts/stats.php > /dev/null 2>&1
 EOF
     
     chmod 644 "$CRON_FILE"
@@ -1463,345 +1251,133 @@ EOF
     
     # Executar backup inicial
     log "Executando backup inicial..."
-    bash "$BACKUP_SCRIPT"
+    bash "$BACKUP_SCRIPT" 2>/dev/null || warn "Backup inicial falhou, continuando..."
     
     success "Sistema de backup configurado"
 }
 
-# Configurar monitoramento
-setup_monitoring() {
-    log "Configurando monitoramento básico..."
-    
-    # Criar script de monitoramento
-    MONITOR_SCRIPT="$INSTALL_DIR/scripts/monitor.sh"
-    
-    cat > "$MONITOR_SCRIPT" <<'EOF'
-#!/bin/bash
-# Script de monitoramento do sistema
-
-LOG_DIR="/var/www/youtube-audio-extractor/logs"
-DATE=$(date +%Y%m%d)
-TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-
-# Criar diretório de logs se não existir
-mkdir -p "$LOG_DIR"
-
-# Função para registrar alerta
-log_alert() {
-    echo "[$TIMESTAMP] $1" >> "$LOG_DIR/alert_$DATE.log"
-}
-
-# Verificar espaço em disco
-DISK_USAGE=$(df -h / | awk 'NR==2 {print $(NF-1)}' | sed 's/%//')
-if [ "$DISK_USAGE" -gt 90 ]; then
-    log_alert "ALERTA CRÍTICA: Uso de disco em ${DISK_USAGE}%"
-elif [ "$DISK_USAGE" -gt 80 ]; then
-    log_alert "ALERTA: Uso de disco em ${DISK_USAGE}%"
-fi
-
-# Verificar memória
-MEM_TOTAL=$(free -m | awk 'NR==2 {print $2}')
-MEM_USED=$(free -m | awk 'NR==2 {print $3}')
-MEM_PERCENT=$((MEM_USED * 100 / MEM_TOTAL))
-
-if [ "$MEM_PERCENT" -gt 90 ]; then
-    log_alert "ALERTA CRÍTICA: Uso de memória em ${MEM_PERCENT}% (${MEM_USED}MB/${MEM_TOTAL}MB)"
-elif [ "$MEM_PERCENT" -gt 80 ]; then
-    log_alert "ALERTA: Uso de memória em ${MEM_PERCENT}%"
-fi
-
-# Verificar CPU load
-LOAD=$(uptime | awk -F'load average:' '{print $2}' | awk -F, '{print $1}' | tr -d ' ')
-LOAD_THRESHOLD=2.0
-
-if (( $(echo "$LOAD > $LOAD_THRESHOLD" | bc -l) )); then
-    log_alert "ALERTA: Carga da CPU alta: $LOAD"
-fi
-
-# Verificar serviços
-check_service() {
-    local service=$1
-    if ! systemctl is-active --quiet "$service"; then
-        log_alert "SERVIÇO PARADO: $service"
-        # Tentar reiniciar se parado
-        systemctl restart "$service" 2>/dev/null && log_alert "Serviço $service reiniciado com sucesso"
-    fi
-}
-
-# Serviços essenciais
-check_service "apache2"
-check_service "mysql"
-check_service "redis-server"
-check_service "supervisor"
-
-# Verificar se o site está respondendo
-if command -v curl &> /dev/null; then
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/ || echo "000")
-    if [[ ! "$HTTP_CODE" =~ ^(200|302|301)$ ]]; then
-        log_alert "SITE OFFLINE: Código HTTP $HTTP_CODE"
-    fi
-fi
-
-# Verificar workers do Supervisor
-if command -v supervisorctl &> /dev/null; then
-    if ! supervisorctl status > /dev/null 2>&1; then
-        log_alert "SUPERVISOR OFFLINE: Não foi possível acessar o supervisor"
-    else
-        if ! supervisorctl status | grep -q "RUNNING"; then
-            log_alert "WORKERS PARADOS: Nenhum worker em execução"
-            supervisorctl restart all 2>/dev/null && log_alert "Todos workers reiniciados"
-        fi
-    fi
-fi
-
-# Verificar espaço nos logs
-LOG_SIZE=$(du -sm "$LOG_DIR" | awk '{print $1}')
-if [ "$LOG_SIZE" -gt 1024 ]; then
-    log_alert "LOGS GRANDES: Diretório de logs com ${LOG_SIZE}MB"
-    # Limpar logs antigos
-    find "$LOG_DIR" -name "*.log" -mtime +7 -delete 2>/dev/null
-fi
-
-# Limitar tamanho do arquivo de alertas
-if [ -f "$LOG_DIR/alert_$DATE.log" ]; then
-    tail -n 1000 "$LOG_DIR/alert_$DATE.log" > "${LOG_DIR}/alert_${DATE}.tmp" && \
-    mv "${LOG_DIR}/alert_${DATE}.tmp" "$LOG_DIR/alert_$DATE.log"
-fi
-
-# Registrar que a verificação foi concluída
-echo "[$TIMESTAMP] Verificação de monitoramento concluída" >> "$LOG_DIR/monitor.log"
-EOF
-    
-    chmod +x "$MONITOR_SCRIPT"
-    
-    # Adicionar ao cron para execução a cada 5 minutos
-    if ! grep -q "monitor.sh" /etc/cron.d/youtube-extractor 2>/dev/null; then
-        echo "*/5 * * * * root $MONITOR_SCRIPT > /dev/null 2>&1" >> /etc/cron.d/youtube-extractor
-    fi
-    
-    success "Monitoramento configurado"
-}
-
 # ============================================================================
-# VALIDAÇÃO E TESTES
+# FLUXO PRINCIPAL
 # ============================================================================
+
+# Coletar informações do usuário
+collect_info() {
+    clear
+    echo -e "${CYAN}"
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║               YouTube Audio Extractor                         ║"
+    echo "║               Instalador Automático v2.0.4                    ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo ""
+    
+    info "Bem-vindo ao instalador do YouTube Audio Extractor!"
+    echo ""
+    
+    # Obter IP local
+    LOCAL_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "127.0.0.1")
+    
+    # Perguntar domínio
+    echo "Por favor, insira o domínio que será usado para acessar o sistema."
+    echo "Para desenvolvimento local, use: localhost ou $LOCAL_IP"
+    echo ""
+    
+    read -p "Domínio ou IP [${LOCAL_IP}]: " DOMAIN_NAME
+    DOMAIN_NAME=${DOMAIN_NAME:-$LOCAL_IP}
+    
+    # Perguntar email do admin
+    echo ""
+    read -p "Email do administrador [${EMAIL_ADMIN}]: " input_email
+    EMAIL_ADMIN=${input_email:-$EMAIL_ADMIN}
+    
+    # Mostrar configurações
+    echo ""
+    info "Configurações selecionadas:"
+    echo "  Domínio: $DOMAIN_NAME"
+    echo "  Email Admin: $EMAIL_ADMIN"
+    echo "  Diretório: $INSTALL_DIR"
+    echo ""
+    
+    if ! confirm "Deseja continuar com a instalação?"; then
+        info "Instalação cancelada pelo usuário"
+        exit 0
+    fi
+}
 
 # Testar instalação
 test_installation() {
     log "Testando instalação..."
     
     echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                   TESTES DO SISTEMA                          ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo ""
-    
-    TESTS_PASSED=0
-    TESTS_TOTAL=0
+    info "Realizando testes de sistema:"
+    echo "========================================"
     
     # Testar Apache
-    ((TESTS_TOTAL++))
     if systemctl is-active --quiet apache2; then
-        echo -e "  ${GREEN}✓${NC} Apache está rodando"
-        ((TESTS_PASSED++))
+        success "✓ Apache está rodando"
     else
-        echo -e "  ${RED}✗${NC} Apache não está rodando"
+        error "✗ Apache não está rodando"
     fi
     
     # Testar MySQL
-    ((TESTS_TOTAL++))
     if systemctl is-active --quiet mysql || systemctl is-active --quiet mariadb; then
-        echo -e "  ${GREEN}✓${NC} MySQL/MariaDB está rodando"
-        ((TESTS_PASSED++))
+        success "✓ MySQL/MariaDB está rodando"
     else
-        echo -e "  ${RED}✗${NC} MySQL/MariaDB não está rodando"
-    fi
-    
-    # Testar Redis
-    ((TESTS_TOTAL++))
-    if systemctl is-active --quiet redis-server; then
-        echo -e "  ${GREEN}✓${NC} Redis está rodando"
-        ((TESTS_PASSED++))
-    else
-        echo -e "  ${RED}✗${NC} Redis não está rodando"
+        error "✗ MySQL/MariaDB não está rodando"
     fi
     
     # Testar PHP
-    ((TESTS_TOTAL++))
     if php --version &> /dev/null; then
-        echo -e "  ${GREEN}✓${NC} PHP está instalado"
-        ((TESTS_PASSED++))
+        success "✓ PHP está instalado"
     else
-        echo -e "  ${RED}✗${NC} PHP não está instalado"
+        error "✗ PHP não está instalado"
     fi
     
     # Testar Python
-    ((TESTS_TOTAL++))
     if /opt/youtube-venv/bin/python3 --version &> /dev/null; then
-        echo -e "  ${GREEN}✓${NC} Python está instalado"
-        ((TESTS_PASSED++))
+        success "✓ Python está instalado"
     else
-        echo -e "  ${RED}✗${NC} Python não está instalado"
+        error "✗ Python não está instalado"
     fi
     
     # Testar yt-dlp
-    ((TESTS_TOTAL++))
     if /opt/youtube-venv/bin/yt-dlp --version &> /dev/null; then
-        echo -e "  ${GREEN}✓${NC} yt-dlp está instalado"
-        ((TESTS_PASSED++))
+        success "✓ yt-dlp está instalado"
     else
-        echo -e "  ${RED}✗${NC} yt-dlp não está instalado"
+        error "✗ yt-dlp não está instalado"
     fi
     
-    # Testar FFmpeg
-    ((TESTS_TOTAL++))
-    if ffmpeg -version &> /dev/null; then
-        echo -e "  ${GREEN}✓${NC} FFmpeg está instalado"
-        ((TESTS_PASSED++))
-    else
-        echo -e "  ${RED}✗${NC} FFmpeg não está instalado"
-    fi
-    
-    # Testar Supervisor
-    ((TESTS_TOTAL++))
-    if systemctl is-active --quiet supervisor; then
-        echo -e "  ${GREEN}✓${NC} Supervisor está rodando"
-        ((TESTS_PASSED++))
-    else
-        echo -e "  ${RED}✗${NC} Supervisor não está rodando"
-    fi
-    
-    # Testar acesso ao site
-    ((TESTS_TOTAL++))
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost/" || echo "000")
-    if [[ "$HTTP_CODE" =~ ^(200|302|301)$ ]]; then
-        echo -e "  ${GREEN}✓${NC} Site está acessível (HTTP $HTTP_CODE)"
-        ((TESTS_PASSED++))
-    else
-        echo -e "  ${YELLOW}⚠${NC} Site pode não estar acessível (HTTP $HTTP_CODE)"
-    fi
-    
-    # Testar banco de dados
-    ((TESTS_TOTAL++))
-    if mysql -u youtube_user -p"${DB_PASSWORD}" -e "SELECT 1;" youtube_extractor &> /dev/null; then
-        echo -e "  ${GREEN}✓${NC} Banco de dados acessível"
-        ((TESTS_PASSED++))
-    else
-        echo -e "  ${RED}✗${NC} Banco de dados não acessível"
-    fi
-    
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                   RESUMO DOS TESTES                          ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo ""
-    
-    if [ "$TESTS_PASSED" -eq "$TESTS_TOTAL" ]; then
-        echo -e "  ${GREEN}✅ TODOS OS TESTES PASSARAM ($TESTS_PASSED/$TESTS_TOTAL)${NC}"
-    elif [ "$TESTS_PASSED" -ge $((TESTS_TOTAL * 8 / 10)) ]; then
-        echo -e "  ${YELLOW}⚠  TESTES QUASE COMPLETOS ($TESTS_PASSED/$TESTS_TOTAL)${NC}"
-    else
-        echo -e "  ${RED}❌ TESTES COM FALHAS ($TESTS_PASSED/$TESTS_TOTAL)${NC}"
-    fi
-    
-    echo ""
+    echo "========================================"
 }
 
 # Mostrar resumo da instalação
 show_summary() {
     echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║         INSTALAÇÃO CONCLUÍDA COM SUCESSO!                    ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo "========================================"
+    echo "  INSTALAÇÃO CONCLUÍDA COM SUCESSO!"
+    echo "========================================"
     echo ""
-    
-    echo -e "${CYAN}📋 RESUMO DA INSTALAÇÃO:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo -e "  ${WHITE}🌐 Domínio:${NC}              ${DOMAIN_NAME}"
-    echo -e "  ${WHITE}📁 Diretório:${NC}            ${INSTALL_DIR}"
-    echo -e "  ${WHITE}📧 Email Admin:${NC}          ${EMAIL_ADMIN}"
-    echo -e "  ${WHITE}🔑 Senha Admin:${NC}          ${ADMIN_PASSWORD}"
-    echo -e "  ${WHITE}🗄️  Banco de Dados:${NC}      youtube_extractor"
-    echo -e "  ${WHITE}👤 Usuário DB:${NC}           youtube_user"
-    echo -e "  ${WHITE}🔒 Senha DB:${NC}             ${DB_PASSWORD}"
+    echo "📋 RESUMO DA INSTALAÇÃO:"
+    echo "----------------------------------------"
+    echo "🌐 Domínio:              ${DOMAIN_NAME}"
+    echo "📁 Diretório:            ${INSTALL_DIR}"
+    echo "📧 Email Admin:          ${EMAIL_ADMIN}"
+    echo "🔑 Senha Admin:          ${ADMIN_PASSWORD}"
+    echo "🗄️  Banco de Dados:      youtube_extractor"
+    echo "👤 Usuário DB:           youtube_user"
+    echo "🔒 Senha DB:             ${DB_PASSWORD}"
     echo ""
-    
-    echo -e "${CYAN}🔧 SERVIÇOS INSTALADOS:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo "  ✅ Apache 2.4"
-    echo "  ✅ MySQL/MariaDB"
-    echo "  ✅ PHP 8.2"
-    echo "  ✅ Redis"
-    echo "  ✅ Python 3 + Virtual Env"
-    echo "  ✅ yt-dlp"
-    echo "  ✅ FFmpeg"
-    echo "  ✅ Supervisor"
-    echo "  ✅ Certbot (SSL)"
+    echo "🚀 URLs DE ACESSO:"
+    echo "----------------------------------------"
+    echo "🌍 Site Principal:       http://${DOMAIN_NAME}"
+    echo "🔐 Painel Admin:         http://${DOMAIN_NAME}/admin"
     echo ""
-    
-    echo -e "${CYAN}🚀 URLs DE ACESSO:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo -e "  ${WHITE}🌍 Site Principal:${NC}       http://${DOMAIN_NAME}"
-    echo -e "  ${WHITE}🔐 Painel Admin:${NC}         http://${DOMAIN_NAME}/admin"
-    echo -e "  ${WHITE}📊 Status:${NC}               http://${DOMAIN_NAME}/status"
-    echo -e "  ${WHITE}⚙️  phpMyAdmin:${NC}          http://${DOMAIN_NAME}/phpmyadmin"
-    echo ""
-    
-    echo -e "${CYAN}📊 INFORMAÇÕES IMPORTANTES:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo "  1. Configure o DNS do domínio para apontar para este servidor"
-    echo "  2. Execute 'sudo certbot --apache' para configurar SSL se necessário"
-    echo "  3. Altere a senha do admin no primeiro acesso"
-    echo "  4. Configure backups regulares"
-    echo "  5. Monitore os logs em: ${INSTALL_DIR}/logs/"
-    echo ""
-    
-    echo -e "${CYAN}🛡️  CREDENCIAIS DE ACESSO:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo -e "  ${YELLOW}Painel Admin:${NC}"
-    echo "    Usuário: admin"
-    echo "    Senha: ${ADMIN_PASSWORD}"
-    echo ""
-    echo -e "  ${YELLOW}Banco de Dados:${NC}"
-    echo "    Host: localhost"
-    echo "    Usuário: youtube_user"
-    echo "    Senha: ${DB_PASSWORD}"
-    echo "    Banco: youtube_extractor"
-    echo ""
-    
-    echo -e "${CYAN}⚠️  IMPORTANTE:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo "  1. Salve estas credenciais em um local seguro!"
-    echo "  2. Altere todas as senhas após o primeiro acesso"
-    echo "  3. Configure firewall e segurança adicional"
-    echo "  4. Faça backup regular dos dados"
-    echo ""
-    
-    echo -e "${CYAN}📞 SUPORTE E LOGS:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo "  📋 Logs do sistema: ${INSTALL_DIR}/logs/"
-    echo "  📚 Documentação: ${INSTALL_DIR}/README.md"
-    echo "  🐛 Issues: ${REPO_URL}/issues"
-    echo "  💾 Backups: ${INSTALL_DIR}/backup/"
-    echo ""
-    
-    echo -e "${CYAN}🔄 COMANDOS ÚTEIS:${NC}"
-    echo "────────────────────────────────────────────────────────"
-    echo "  Reiniciar serviços:"
-    echo "    sudo systemctl restart apache2 mysql redis supervisor"
-    echo ""
-    echo "  Verificar status:"
-    echo "    sudo systemctl status apache2 mysql redis supervisor"
-    echo ""
-    echo "  Monitorar logs:"
-    echo "    sudo tail -f ${INSTALL_DIR}/logs/worker.log"
-    echo "    sudo tail -f ${INSTALL_DIR}/logs/error.log"
-    echo ""
-    echo "  Backup manual:"
-    echo "    sudo bash ${INSTALL_DIR}/scripts/backup.sh"
-    echo ""
-    echo "  Verificar espaço em disco:"
-    echo "    df -h"
+    echo "⚠️  IMPORTANTE:"
+    echo "----------------------------------------"
+    echo "1. Salve estas credenciais em um local seguro!"
+    echo "2. Altere a senha do admin no primeiro acesso"
+    echo "3. Acesse o MySQL com: sudo mysql"
+    echo "   Ou com a senha: ${DB_PASSWORD}"
     echo ""
 }
 
@@ -1814,22 +1390,12 @@ save_credentials() {
 CREDENCIAIS DO YOUTUBE AUDIO EXTRACTOR
 ========================================
 
-IMPORTANTE: Este arquivo contém informações sensíveis.
-Guarde em local seguro e exclua após anotar as credenciais.
-
 DATA DA INSTALAÇÃO: $(date)
-
-SISTEMA:
---------
-Servidor: $(hostname)
-IP: $(hostname -I | awk '{print $1}')
-Domínio: ${DOMAIN_NAME}
-Sistema: $(lsb_release -ds)
 
 ACESSO AO SISTEMA:
 ------------------
-URL: https://${DOMAIN_NAME}
-Painel Admin: https://${DOMAIN_NAME}/admin
+URL: http://${DOMAIN_NAME}
+Painel Admin: http://${DOMAIN_NAME}/admin
 Usuário: admin
 Senha: ${ADMIN_PASSWORD}
 
@@ -1840,11 +1406,10 @@ Usuário: youtube_user
 Senha: ${DB_PASSWORD}
 Banco: youtube_extractor
 
-CHAVES DE SEGURANÇA:
--------------------
-APP_KEY: ${SECRET_KEY}
-JWT_SECRET: ${JWT_SECRET}
-ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+ACESSO ROOT DO MYSQL:
+---------------------
+No Ubuntu, use: sudo mysql
+Ou com senha: mysql -u root -p${DB_PASSWORD}
 
 DIRETÓRIOS IMPORTANTES:
 ----------------------
@@ -1853,125 +1418,11 @@ Logs: ${INSTALL_DIR}/logs/
 Backups: ${INSTALL_DIR}/backup/
 Uploads: ${INSTALL_DIR}/assets/uploads/
 
-COMANDOS ÚTEIS:
----------------
-Reiniciar serviços: sudo systemctl restart apache2 mysql redis supervisor
-Verificar status: sudo systemctl status apache2 mysql redis supervisor
-Monitorar logs: tail -f ${INSTALL_DIR}/logs/worker.log
-Backup manual: sudo bash ${INSTALL_DIR}/scripts/backup.sh
-
-SEGURANÇA:
----------
-1. Altere todas as senhas após o primeiro acesso
-2. Configure firewall adequadamente
-3. Mantenha o sistema atualizado
-4. Faça backups regulares
-5. Monitore os logs diariamente
-
-SUPORTE:
---------
-Documentação: ${INSTALL_DIR}/README.md
-Issues: ${REPO_URL}/issues
-Logs do sistema: ${INSTALL_DIR}/logs/
-
-========================================
-⚠️  IMPORTANTE: EXCLUA ESTE ARQUIVO APÓS ANOTAR AS CREDENCIAIS
 ========================================
 EOF
     
     chmod 600 "$CREDS_FILE"
     warn "Credenciais salvas em: $CREDS_FILE"
-    warn "EXCLUA ESTE ARQUIVO APÓS ANOTAR AS CREDENCIAIS!"
-    echo ""
-}
-
-# ============================================================================
-# FLUXO PRINCIPAL
-# ============================================================================
-
-# Banner inicial
-show_banner() {
-    clear
-    echo -e "${CYAN}"
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                                                              ║"
-    echo "║  ██╗   ██╗ ██████╗ ██╗   ██╗████████╗██████╗  ██████╗ █████╗  ║"
-    echo "║  ╚██╗ ██╔╝██╔═══██╗██║   ██║╚══██╔══╝██╔══██╗██╔═══██╗██╔══██╗ ║"
-    echo "║   ╚████╔╝ ██║   ██║██║   ██║   ██║   ██████╔╝██║   ██║███████║ ║"
-    echo "║    ╚██╔╝  ██║   ██║██║   ██║   ██║   ██╔══██╗██║   ██║██╔══██║ ║"
-    echo "║     ██║   ╚██████╔╝╚██████╔╝   ██║   ██║  ██║╚██████╔╝██║  ██║ ║"
-    echo "║     ╚═╝    ╚═════╝  ╚═════╝    ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ║"
-    echo "║                                                              ║"
-    echo "║               YouTube Audio Extractor                         ║"
-    echo "║               Instalador Automático v2.0.3                    ║"
-    echo "║                                                              ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    echo ""
-}
-
-# Coletar informações do usuário - VERSÃO SIMPLIFICADA
-collect_info() {
-    show_banner
-    
-    info "Bem-vindo ao instalador do YouTube Audio Extractor!"
-    echo ""
-    echo "Este instalador vai configurar um sistema completo para extração"
-    echo "de áudio do YouTube com recursos avançados e processamento em IA."
-    echo ""
-    
-    # Obter IP local em vez de público
-    info "Obtendo informações do servidor..."
-    LOCAL_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "127.0.0.1")
-    info "IP local: $LOCAL_IP"
-    echo ""
-    
-    # Perguntar domínio
-    echo "Por favor, insira o domínio que será usado para acessar o sistema."
-    echo "Se não tiver um domínio, você pode usar:"
-    echo "  • IP local: $LOCAL_IP"
-    echo "  • Localhost: localhost"
-    echo "  • Ou qualquer outro nome"
-    echo ""
-    
-    read -p "Domínio, IP ou nome [${LOCAL_IP}]: " DOMAIN_NAME
-    DOMAIN_NAME=${DOMAIN_NAME:-$LOCAL_IP}
-    
-    # Se for vazio, usar localhost
-    if [[ -z "$DOMAIN_NAME" ]]; then
-        DOMAIN_NAME="localhost"
-    fi
-    
-    # Perguntar email do admin
-    echo ""
-    echo "Informe o email do administrador para notificações e SSL."
-    echo "(Para desenvolvimento local, mantenha o padrão)"
-    echo ""
-    
-    read -p "Email do administrador [${EMAIL_ADMIN}]: " input_email
-    EMAIL_ADMIN=${input_email:-$EMAIL_ADMIN}
-    
-    # Mostrar configurações
-    echo ""
-    info "Configurações selecionadas:"
-    echo "  🏠 Domínio:       $DOMAIN_NAME"
-    echo "  📧 Email Admin:   $EMAIL_ADMIN"
-    echo "  📁 Diretório:     $INSTALL_DIR"
-    echo "  🗄️  Banco de Dados: youtube_extractor"
-    echo ""
-    
-    echo "A instalação vai:"
-    echo "  • Atualizar o sistema operacional"
-    echo "  • Instalar Apache, MySQL, PHP, Redis, Python"
-    echo "  • Configurar ambiente virtual Python com yt-dlp e FFmpeg"
-    echo "  • Configurar SSL automaticamente (se possível)"
-    echo "  • Configurar backup e monitoramento automáticos"
-    echo ""
-    
-    if ! confirm "Deseja continuar com a instalação?"; then
-        info "Instalação cancelada pelo usuário"
-        exit 0
-    fi
 }
 
 # Fluxo principal de instalação
@@ -1996,15 +1447,9 @@ main_installation() {
     install_php
     install_redis
     install_python
-    
-    # Node.js é opcional - continuar mesmo se falhar
-    if ! install_nodejs; then
-        warn "Node.js não instalado. Continuando sem ele..."
-    fi
-    
+    install_nodejs
     install_supervisor
     install_certbot
-    setup_firewall
     
     # 5. Clonar repositório
     clone_repository
@@ -2014,80 +1459,34 @@ main_installation() {
     setup_env_file
     setup_apache_vhost
     
-    # 7. Configurar SSL apenas se for domínio válido
-    if validate_domain "$DOMAIN_NAME"; then
+    # Configurar SSL apenas se for domínio válido
+    if [[ "$DOMAIN_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
         setup_ssl
-    else
-        warn "SSL não configurado (IP local, localhost ou nome inválido)"
-        info "Configure SSL manualmente se necessário: sudo certbot --apache"
     fi
     
     setup_supervisor
     setup_permissions
     setup_cron
     setup_backup
-    setup_monitoring
     
-    # 8. Testar instalação
+    # 7. Testar instalação
     test_installation
     
-    # 9. Mostrar resumo e salvar credenciais
+    # 8. Mostrar resumo e salvar credenciais
     show_summary
     save_credentials
     
-    # 10. Mensagem final
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║                    INSTALAÇÃO CONCLUÍDA                      ║"
-    echo "╚══════════════════════════════════════════════════════════════╝"
-    echo ""
-    
     log "Instalação concluída com sucesso!"
     echo ""
-    
-    if [[ "$DOMAIN_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        info "Acesse o sistema em: http://${DOMAIN_NAME}"
-    elif [[ "$DOMAIN_NAME" == "localhost" ]]; then
-        info "Acesse o sistema em: http://localhost"
-    else
-        info "Acesse o sistema em: http://${DOMAIN_NAME}"
-        info "Ou com SSL (se configurado): https://${DOMAIN_NAME}"
-    fi
-    
+    info "Acesse o sistema em: http://${DOMAIN_NAME}"
+    info "Usuário admin: admin"
+    info "Senha admin: ${ADMIN_PASSWORD}"
     echo ""
-    info "Próximos passos recomendados:"
-    echo "  1. Acesse o painel admin e altere a senha"
-    echo "  2. Configure os backups automáticos"
-    echo "  3. Monitore os logs inicialmente"
-    echo "  4. Teste o download de alguns áudios"
-    echo ""
-    
-    if confirm "Deseja reiniciar o servidor agora para aplicar todas as configurações?"; then
-        warn "Reiniciando o servidor em 10 segundos..."
-        warn "Pressione Ctrl+C para cancelar"
-        sleep 10
-        reboot
-    else
-        info "Para aplicar todas as configurações, reinicie manualmente:"
-        echo "  sudo reboot"
-        echo ""
-    fi
 }
 
 # Tratamento de erros
 trap 'error "Instalação interrompida pelo usuário"; exit 1' INT
 trap 'error "Ocorreu um erro na linha $LINENO"; exit 1' ERR
-
-# Verificar argumentos
-if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
-    echo "Uso: sudo ./install.sh"
-    echo ""
-    echo "Opções:"
-    echo "  --help, -h     Mostra esta ajuda"
-    echo "  --domain DOM   Define o domínio automaticamente"
-    echo "  --email EMAIL  Define o email do admin automaticamente"
-    exit 0
-fi
 
 # Executar instalação
 main_installation
