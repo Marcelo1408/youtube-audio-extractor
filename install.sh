@@ -1,6 +1,6 @@
 #!/bin/bash
-# YouTube Audio Extractor - Instalador Ultra Simples
-# Versão: 4.0.0 - COM ESTILO MODERNO
+# YouTube Audio Extractor - Instalador Completo
+# Versão: 4.1.0 - COM SITE REAL DO ZIP
 
 set -e
 
@@ -14,6 +14,9 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m'
+
+# URL do site real
+SITE_ZIP_URL="https://github.com/Marcelo1408/youtube-audio-extractor/raw/18d05c50b5bc8c49d813608941b9d79613fdf611/youtube-audio-extractor.zip"
 
 # ============================================================================
 # FUNÇÕES DE ESTILO
@@ -33,7 +36,7 @@ echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║                                                          ║"
 echo "║     🎵 YOUTUBE AUDIO EXTRACTOR - INSTALADOR              ║"
-echo "║                     Versão 4.0.0                         ║"
+echo "║           COM SITE REAL (ZIP) - v4.1.0                   ║"
 echo "║                                                          ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
@@ -66,7 +69,7 @@ while true; do
 done
 
 # ============================================================================
-# CONFIGURAÇÕES DO SISTEMA (FIXAS)
+# CONFIGURAÇÕES DO SISTEMA
 # ============================================================================
 INSTALL_DIR="/var/www/audioextractor"
 DB_NAME="youtube_extractor"
@@ -83,11 +86,12 @@ echo "🌐 Domínio:          $DOMAIN"
 echo "📧 Email Admin:      $EMAIL"
 echo "📁 Diretório:        $INSTALL_DIR"
 echo "🗄️  Banco de Dados:  $DB_NAME"
+echo "📦 Site:             Baixado do GitHub (ZIP)"
 echo ""
 echo "🔧 Este instalador vai:"
 echo "   1. Instalar Apache, MySQL, PHP, Python"
 echo "   2. Criar banco de dados"
-echo "   3. Configurar site em $INSTALL_DIR"
+echo "   3. Baixar e instalar site real do ZIP"
 echo "   4. Configurar domínio $DOMAIN"
 echo "══════════════════════════════════════════════"
 echo ""
@@ -99,7 +103,7 @@ read -p "⏯️  Pressione Enter para continuar ou Ctrl+C para cancelar..."
 # ============================================================================
 
 # PASSO 1: INSTALAR PACOTES
-step "1/6" "Instalando pacotes básicos..."
+step "1/7" "Instalando pacotes básicos..."
 apt update > /dev/null 2>&1
 apt install -y apache2 mariadb-server mariadb-client \
               software-properties-common curl wget git \
@@ -122,7 +126,7 @@ python3 -m venv /opt/audioenv > /dev/null 2>&1
 success "Ferramentas Python instaladas"
 
 # PASSO 2: CONFIGURAR MYSQL
-step "2/6" "Configurando MySQL..."
+step "2/7" "Configurando MySQL..."
 systemctl start mariadb > /dev/null 2>&1
 systemctl enable mariadb > /dev/null 2>&1
 
@@ -223,14 +227,103 @@ EOF
     rm -f "$SQL_FILE"
 fi
 
-# PASSO 3: CONFIGURAR APACHE
-step "3/6" "Configurando Apache..."
+# PASSO 3: BAIXAR E INSTALAR SITE REAL DO ZIP
+step "3/7" "Baixando e instalando site real do ZIP..."
+
+# Verificar se o ZIP já existe no diretório atual
+if [ -f "youtube-audio-extractor.zip" ]; then
+    info "Usando arquivo ZIP local..."
+    cp youtube-audio-extractor.zip /tmp/site.zip
+    success "Arquivo ZIP local encontrado"
+else
+    info "Baixando site do GitHub..."
+    if wget -q -O /tmp/site.zip "$SITE_ZIP_URL"; then
+        success "Site baixado do GitHub com sucesso!"
+    else
+        error "Falha ao baixar o site do GitHub"
+        info "Verificando arquivo ZIP local..."
+        
+        # Procurar arquivo ZIP em outros locais
+        if find . -name "*.zip" -type f | grep -q youtube-audio; then
+            ZIP_FILE=$(find . -name "*.zip" -type f | grep youtube-audio | head -1)
+            cp "$ZIP_FILE" /tmp/site.zip
+            success "Arquivo ZIP encontrado: $ZIP_FILE"
+        else
+            error "Não foi possível encontrar o arquivo youtube-audio-extractor.zip"
+            warn "Será criado um site de teste. Você precisará instalar o site manualmente depois."
+        fi
+    fi
+fi
+
+# PASSO 4: PREPARAR DIRETÓRIO E EXTRAIR SITE
+step "4/7" "Preparando diretório do site..."
 
 # Criar diretório do site
 mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
 
-# Criar index.php de teste
-cat > "$INSTALL_DIR/index.php" <<EOF
+# Limpar diretório se existir conteúdo
+rm -rf "$INSTALL_DIR"/* 2>/dev/null || true
+
+# Extrair o site se o ZIP existe
+if [ -f "/tmp/site.zip" ]; then
+    info "Extraindo site real..."
+    if unzip -q /tmp/site.zip -d "$INSTALL_DIR"; then
+        success "Site extraído com sucesso!"
+        
+        # Verificar estrutura extraída
+        if [ -d "$INSTALL_DIR/youtube-audio-extractor" ]; then
+            # Se extraiu para subdiretório, mover conteúdo
+            mv "$INSTALL_DIR/youtube-audio-extractor"/* "$INSTALL_DIR/" 2>/dev/null
+            mv "$INSTALL_DIR/youtube-audio-extractor"/.* "$INSTALL_DIR/" 2>/dev/null || true
+            rm -rf "$INSTALL_DIR/youtube-audio-extractor"
+            success "Estrutura de diretórios organizada"
+        fi
+        
+        # Verificar se o site tem arquivos PHP
+        if ls "$INSTALL_DIR"/*.php >/dev/null 2>&1; then
+            success "Site PHP detectado!"
+            
+            # Criar .htaccess se não existir
+            if [ ! -f "$INSTALL_DIR/.htaccess" ]; then
+                cat > "$INSTALL_DIR/.htaccess" <<EOF
+Options -Indexes
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [L]
+EOF
+                success ".htaccess criado"
+            fi
+            
+            # Configurar .env se houver exemplo
+            if [ -f "$INSTALL_DIR/.env.example" ]; then
+                cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env"
+                # Atualizar configurações no .env
+                sed -i "s|APP_URL=.*|APP_URL=https://$DOMAIN|" "$INSTALL_DIR/.env"
+                sed -i "s/DB_DATABASE=.*/DB_DATABASE=$DB_NAME/" "$INSTALL_DIR/.env"
+                sed -i "s/DB_USERNAME=.*/DB_USERNAME=$DB_USER/" "$INSTALL_DIR/.env"
+                sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=$DB_PASS/" "$INSTALL_DIR/.env"
+                success "Arquivo .env configurado"
+            fi
+            
+        else
+            warn "Nenhum arquivo PHP encontrado no site extraído"
+            create_test_site
+        fi
+        
+    else
+        error "Falha ao extrair o ZIP"
+        create_test_site
+    fi
+else
+    warn "Nenhum arquivo ZIP disponível. Criando site de teste..."
+    create_test_site
+fi
+
+# Função para criar site de teste (se necessário)
+create_test_site() {
+    cat > "$INSTALL_DIR/index.php" <<EOF
 <!DOCTYPE html>
 <html>
 <head>
@@ -241,17 +334,21 @@ cat > "$INSTALL_DIR/index.php" <<EOF
         .success { color: #28a745; }
         .error { color: #dc3545; }
         h1 { color: #343a40; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; }
     </style>
 </head>
 <body>
     <h1>🎵 YouTube Audio Extractor</h1>
     
-    <div class="box">
-        <h2>✅ Sistema Instalado</h2>
-        <p><strong>Domínio:</strong> <?php echo \$_SERVER['HTTP_HOST'] ?? '$DOMAIN'; ?></p>
-        <p><strong>Diretório:</strong> <?php echo __DIR__; ?></p>
-        <p><strong>Data:</strong> <?php echo date('d/m/Y H:i:s'); ?></p>
-        <p><strong>Email Admin:</strong> <?php echo '$EMAIL'; ?></p>
+    <div class="warning">
+        <h2>⚠️ SITE REAL NÃO INSTALADO</h2>
+        <p>O instalador não conseguiu baixar/extrair o site real.</p>
+        <p><strong>Solução:</strong></p>
+        <ol>
+            <li>Baixe manualmente: <a href="$SITE_ZIP_URL" target="_blank">youtube-audio-extractor.zip</a></li>
+            <li>Extraia no diretório: <?php echo __DIR__; ?></li>
+            <li>Configure o arquivo .env com as credenciais do banco</li>
+        </ol>
     </div>
     
     <div class="box">
@@ -271,48 +368,32 @@ cat > "$INSTALL_DIR/index.php" <<EOF
         
         // Testar Apache
         echo '<p class="success">✅ Apache funcionando</p>';
+        
+        // Testar Python/yt-dlp
+        exec('/opt/audioenv/bin/python3 -c "import yt_dlp; print(\"✅ yt-dlp instalado\")"', \$output, \$return);
+        if (\$return === 0) {
+            echo '<p class="success">✅ yt-dlp e Python funcionando</p>';
+        } else {
+            echo '<p class="error">❌ yt-dlp não disponível</p>';
+        }
         ?>
     </div>
     
     <div class="box">
-        <h2>📁 Próximos Passos</h2>
-        <ol>
-            <li>Copie seus arquivos PHP para: <?php echo __DIR__; ?></li>
-            <li>Configure o arquivo .env com suas credenciais</li>
-            <li>Configure o DNS: $DOMAIN → 45.140.193.50</li>
-            <li>Execute: sudo certbot --apache -d $DOMAIN</li>
-        </ol>
+        <h2>📊 Informações do Sistema</h2>
+        <p><strong>Domínio:</strong> <?php echo \$_SERVER['HTTP_HOST'] ?? '$DOMAIN'; ?></p>
+        <p><strong>Diretório:</strong> <?php echo __DIR__; ?></p>
+        <p><strong>Email Admin:</strong> <?php echo '$EMAIL'; ?></p>
+        <p><strong>Data:</strong> <?php echo date('d/m/Y H:i:s'); ?></p>
     </div>
 </body>
 </html>
 EOF
+    success "Site de teste criado"
+}
 
-# Criar .htaccess
-cat > "$INSTALL_DIR/.htaccess" <<EOF
-Options -Indexes
-RewriteEngine On
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.php [L]
-EOF
-
-# Criar arquivo .env de exemplo
-cat > "$INSTALL_DIR/.env.example" <<EOF
-APP_NAME=YouTube Audio Extractor
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://$DOMAIN
-
-DB_CONNECTION=mysql
-DB_HOST=localhost
-DB_PORT=3306
-DB_DATABASE=$DB_NAME
-DB_USERNAME=$DB_USER
-DB_PASSWORD=$DB_PASS
-
-CACHE_DRIVER=file
-SESSION_DRIVER=file
-EOF
+# PASSO 5: CONFIGURAR APACHE
+step "5/7" "Configurando Apache..."
 
 # Configurar Virtual Host
 cat > /etc/apache2/sites-available/audioextractor.conf <<EOF
@@ -330,21 +411,28 @@ cat > /etc/apache2/sites-available/audioextractor.conf <<EOF
         Require all granted
     </Directory>
     
+    # Configurações para processamento de áudio
     php_value upload_max_filesize 2G
     php_value post_max_size 2G
     php_value max_execution_time 600
     php_value memory_limit 1G
+    php_value max_input_time 600
+    
+    # Headers de segurança
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
 </VirtualHost>
 EOF
 
 # Ativar site
 a2dissite 000-default.conf 2>/dev/null || true
 a2ensite audioextractor.conf
+a2enmod rewrite > /dev/null 2>&1
 systemctl restart apache2 > /dev/null 2>&1
-success "Apache configurado para o domínio $DOMAIN"
+success "Apache configurado para $DOMAIN"
 
-# PASSO 4: CONFIGURAR SSL (OPCIONAL)
-step "4/6" "Configurando SSL..."
+# PASSO 6: CONFIGURAR SSL (OPCIONAL)
+step "6/7" "Configurando SSL..."
 echo ""
 info "Para configurar SSL automaticamente, o DNS deve estar apontado."
 echo "Domínio: $DOMAIN"
@@ -368,15 +456,18 @@ else
     info "  sudo certbot --apache -d $DOMAIN"
 fi
 
-# PASSO 5: PERMISSÕES
-step "5/6" "Configurando permissões..."
+# PASSO 7: PERMISSÕES E FINALIZAÇÃO
+step "7/7" "Configurando permissões e finalizando..."
 chown -R www-data:www-data "$INSTALL_DIR" > /dev/null 2>&1
 find "$INSTALL_DIR" -type d -exec chmod 755 {} \; > /dev/null 2>&1
 find "$INSTALL_DIR" -type f -exec chmod 644 {} \; > /dev/null 2>&1
-success "Permissões configuradas"
 
-# PASSO 6: FINALIZAÇÃO
-step "6/6" "Finalizando instalação..."
+# Criar diretórios necessários
+mkdir -p "$INSTALL_DIR/uploads" "$INSTALL_DIR/temp" "$INSTALL_DIR/logs" 2>/dev/null
+chmod 775 "$INSTALL_DIR/uploads" "$INSTALL_DIR/temp" "$INSTALL_DIR/logs" 2>/dev/null
+chown www-data:www-data "$INSTALL_DIR/uploads" "$INSTALL_DIR/temp" "$INSTALL_DIR/logs" 2>/dev/null
+
+success "Permissões configuradas"
 sleep 2
 
 # ============================================================================
@@ -397,6 +488,14 @@ echo "🌐 Domínio:          $DOMAIN"
 echo "📧 Email Admin:      $EMAIL"
 echo "📁 Diretório:        $INSTALL_DIR"
 echo ""
+
+if [ -f "/tmp/site.zip" ] && [ -f "$INSTALL_DIR/index.php" ]; then
+    echo "✅ Status Site:      Site real instalado do ZIP"
+else
+    echo "⚠️  Status Site:      Site de teste (instale manualmente)"
+fi
+
+echo ""
 echo "🗄️  Banco de Dados:"
 echo "────────────────────────────────────"
 echo "Banco:      $DB_NAME"
@@ -405,9 +504,14 @@ echo "Senha:      $DB_PASS"
 echo ""
 echo "🔧 Próximos Passos:"
 echo "────────────────────────────────────"
-echo "1. 📂 COPIE SEUS ARQUIVOS:"
-echo "   cp -r /caminho/dos/seus/arquivos/* $INSTALL_DIR/"
-echo ""
+
+if [ ! -f "/tmp/site.zip" ] || [ ! -f "$INSTALL_DIR/index.php" ]; then
+    echo "1. 📦 BAIXE O SITE REAL:"
+    echo "   wget '$SITE_ZIP_URL'"
+    echo "   unzip youtube-audio-extractor.zip -d $INSTALL_DIR/"
+    echo ""
+fi
+
 echo "2. 🌐 CONFIGURE O DNS:"
 echo "   $DOMAIN → 45.140.193.50"
 echo ""
@@ -415,11 +519,12 @@ echo "3. 🔒 CONFIGURE SSL (após DNS):"
 echo "   sudo certbot --apache -d $DOMAIN"
 echo ""
 echo "4. 🚀 ACESSE O SISTEMA:"
-echo "   https://$DOMAIN"
+echo "   http://$DOMAIN (ou https após SSL)"
 echo ""
 echo "5. 👤 LOGIN ADMIN (padrão):"
 echo "   Usuário: admin"
 echo "   Email: $EMAIL"
+echo "   Senha: admin123 (altere no primeiro acesso)"
 echo ""
 echo "⚙️  Comandos úteis:"
 echo "────────────────────────────────────"
@@ -427,6 +532,7 @@ echo "• Reiniciar Apache: sudo systemctl restart apache2"
 echo "• Ver logs: sudo tail -f /var/log/apache2/audioextractor-*.log"
 echo "• Acessar MySQL: mysql -u $DB_USER -p $DB_NAME"
 echo "• Acessar diretório: cd $INSTALL_DIR"
+echo "• Ver status: systemctl status apache2 mariadb"
 echo "══════════════════════════════════════════════════════════"
 echo ""
 
@@ -450,6 +556,11 @@ Banco: $DB_NAME
 Usuário: $DB_USER
 Senha: $DB_PASS
 
+SITE
+----
+Status: $(if [ -f "/tmp/site.zip" ] && [ -f "$INSTALL_DIR/index.php" ]; then echo "INSTALADO (do ZIP)"; else echo "NÃO INSTALADO - Baixe manualmente"; fi)
+Arquivo ZIP: $SITE_ZIP_URL
+
 DNS
 ---
 Domínio: $DOMAIN
@@ -457,10 +568,10 @@ IP do servidor: 45.140.193.50
 
 PRÓXIMOS PASSOS
 ---------------
-1. Copie seus arquivos PHP para $INSTALL_DIR
-2. Configure DNS: $DOMAIN → 45.140.193.50
-3. Configure SSL: sudo certbot --apache -d $DOMAIN
-4. Acesse: https://$DOMAIN
+$(if [ ! -f "/tmp/site.zip" ] || [ ! -f "$INSTALL_DIR/index.php" ]; then echo "1. Baixe o site: wget '$SITE_ZIP_URL'"; echo "2. Extraia: unzip youtube-audio-extractor.zip -d $INSTALL_DIR/"; fi)
+$(if [ ! -f "/tmp/site.zip" ] || [ ! -f "$INSTALL_DIR/index.php" ]; then echo "3. "; fi)Configure DNS: $DOMAIN → 45.140.193.50
+$(if [ ! -f "/tmp/site.zip" ] || [ ! -f "$INSTALL_DIR/index.php" ]; then echo "4. "; else echo "3. "; fi)Configure SSL: sudo certbot --apache -d $DOMAIN
+$(if [ ! -f "/tmp/site.zip" ] || [ ! -f "$INSTALL_DIR/index.php" ]; then echo "5. "; else echo "4. "; fi)Acesse: https://$DOMAIN
 
 COMANDOS
 --------
@@ -472,6 +583,10 @@ EOF
 
 success "📄 Resumo salvo em: /root/instalacao_resumo.txt"
 echo ""
-info "🎉 Instalação concluída! O sistema está pronto."
-info "👨‍💼 Lembre-se de copiar seus arquivos PHP para: $INSTALL_DIR"
+info "🎉 Instalação concluída!"
+if [ -f "/tmp/site.zip" ] && [ -f "$INSTALL_DIR/index.php" ]; then
+    info "✅ Site real instalado com sucesso! Acesse: http://$DOMAIN"
+else
+    info "⚠️  Site não instalado. Baixe e extraia manualmente o ZIP."
+fi
 echo ""
