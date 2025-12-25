@@ -1,5 +1,6 @@
 #!/bin/bash
-# backend/database/install.sh - Script de instalação do banco de dados
+# install-sql.sh - Script de instalação do banco de dados (VERSÃO CORRIGIDA)
+# Baixa schema.sql automaticamente do GitHub
 
 set -e
 
@@ -23,13 +24,47 @@ cat << "EOF"
 EOF
 echo -e "${NC}"
 
+# URL do schema.sql no GitHub
+SCHEMA_GITHUB_URL="https://raw.githubusercontent.com/Marcelo1408/youtube-audio-extractor/main/schema.sql"
+LOCAL_SCHEMA_FILE="/tmp/schema_$(date +%s).sql"
+
+echo "📥 Baixando schema.sql do GitHub..."
+if command -v curl &> /dev/null; then
+    if curl -sSL "$SCHEMA_GITHUB_URL" -o "$LOCAL_SCHEMA_FILE"; then
+        if [ -s "$LOCAL_SCHEMA_FILE" ]; then
+            log "Schema baixado com sucesso!"
+        else
+            error "Arquivo schema.sql vazio ou inválido!"
+            exit 1
+        fi
+    else
+        error "Falha ao baixar schema.sql do GitHub!"
+        exit 1
+    fi
+elif command -v wget &> /dev/null; then
+    if wget -q "$SCHEMA_GITHUB_URL" -O "$LOCAL_SCHEMA_FILE"; then
+        if [ -s "$LOCAL_SCHEMA_FILE" ]; then
+            log "Schema baixado com sucesso!"
+        else
+            error "Arquivo schema.sql vazio ou inválido!"
+            exit 1
+        fi
+    else
+        error "Falha ao baixar schema.sql do GitHub!"
+        exit 1
+    fi
+else
+    error "Necessário curl ou wget para baixar o schema!"
+    echo "Instale: sudo apt install curl"
+    exit 1
+fi
+
 # Verificar se MariaDB/MySQL está instalado
 if ! command -v mysql &> /dev/null; then
     error "MariaDB/MySQL não está instalado."
     echo "Para instalar:"
-    echo "  Ubuntu/Debian: sudo apt install mariadb-server"
-    echo "  CentOS/RHEL: sudo yum install mariadb-server"
-    echo "  Após instalar: sudo systemctl start mariadb && sudo systemctl enable mariadb"
+    echo "  sudo apt update && sudo apt install -y mariadb-server"
+    echo "  sudo systemctl start mariadb && sudo systemctl enable mariadb"
     exit 1
 fi
 
@@ -130,24 +165,12 @@ if [[ $REPLY =~ ^[Ss]$ ]]; then
     done
 fi
 
-# Caminho do schema
-SCHEMA_FILE="$(dirname "$0")/schema.sql"
-if [ ! -f "$SCHEMA_FILE" ]; then
-    SCHEMA_FILE="./schema.sql"
-fi
-
-if [ ! -f "$SCHEMA_FILE" ]; then
-    error "Arquivo schema.sql não encontrado!"
-    echo "Certifique-se de que schema.sql está no mesmo diretório."
-    exit 1
-fi
-
 # Criar banco de dados
 echo ""
 echo "📊 Criando banco de dados..."
 echo "---------------------------------"
 
-# Executar comandos SQL
+# Preparar comandos SQL
 SQL_COMMANDS="
 -- Criar banco de dados
 CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -155,8 +178,8 @@ CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4
 USE \`$DB_NAME\`;
 "
 
-# Adicionar schema
-SQL_COMMANDS+=$(cat "$SCHEMA_FILE")
+# Adicionar conteúdo do schema.sql
+SQL_COMMANDS+=$(cat "$LOCAL_SCHEMA_FILE")
 
 # Adicionar usuário da aplicação se solicitado
 if [ "$CREATE_APP_USER" = true ]; then
@@ -167,19 +190,25 @@ CREATE USER IF NOT EXISTS '$APP_USER'@'$DB_HOST' IDENTIFIED BY '$APP_PASS';
 -- Conceder permissões
 GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$APP_USER'@'$DB_HOST';
 
+-- Conceder permissão para criar eventos
+GRANT EVENT ON \`$DB_NAME\`.* TO '$APP_USER'@'$DB_HOST';
+
 -- Atualizar privilégios
 FLUSH PRIVILEGES;
 "
 fi
 
 # Executar SQL
+echo "Executando comandos SQL..."
 if [ -z "$DB_PASS" ]; then
     mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e "$SQL_COMMANDS"
+    EXIT_CODE=$?
 else
     mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" -e "$SQL_COMMANDS"
+    EXIT_CODE=$?
 fi
 
-if [ $? -eq 0 ]; then
+if [ $EXIT_CODE -eq 0 ]; then
     log "✅ Banco de dados criado com sucesso!"
     
     # Verificar tabelas criadas
@@ -191,11 +220,18 @@ if [ $? -eq 0 ]; then
         mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" -D "$DB_NAME" -e "SHOW TABLES;" | sed '1d'
     fi
     
+    # Criar diretório atual para .env
+    CURRENT_DIR="$(pwd)"
+    ENV_FILE="$CURRENT_DIR/.env"
+    
+    # Verificar se estamos em algum subdiretório
+    if [[ "$CURRENT_DIR" == *"backend"* ]] || [[ "$CURRENT_DIR" == *"database"* ]]; then
+        ENV_FILE="$(dirname "$CURRENT_DIR")/.env"
+    fi
+    
     # Criar arquivo .env
     echo ""
-    echo "🔧 Criando arquivo de configuração..."
-    
-    ENV_FILE="../.env"
+    echo "🔧 Criando arquivo de configuração em: $ENV_FILE"
     
     # Gerar chaves secretas seguras
     SESSION_SECRET=$(openssl rand -base64 32)
@@ -222,74 +258,28 @@ DB_USER=$FINAL_DB_USER
 DB_PASSWORD=$FINAL_DB_PASS
 DB_POOL_MIN=2
 DB_POOL_MAX=10
-DB_CONNECTION_LIMIT=100
-DB_QUEUE_LIMIT=0
 
 # ============================================
 # CONFIGURAÇÕES DO SERVIDOR
 # ============================================
 PORT=3000
 NODE_ENV=production
-HOST=0.0.0.0
 SESSION_SECRET=$SESSION_SECRET
 JWT_SECRET=$JWT_SECRET
 CLIENT_URL=http://localhost:3000
-API_URL=http://localhost:3000/api
-TRUST_PROXY=1
-
-# ============================================
-# CONFIGURAÇÕES DE SEGURANÇA
-# ============================================
-BCRYPT_ROUNDS=10
-JWT_EXPIRES_IN=7d
-RATE_LIMIT_WINDOW=15
-RATE_LIMIT_MAX=100
-CORS_ORIGIN=http://localhost:3000
 
 # ============================================
 # CONFIGURAÇÕES DO YOUTUBE
 # ============================================
 YOUTUBE_API_KEY=SUA_CHAVE_API_AQUI
-YOUTUBE_REQUEST_TIMEOUT=30000
-YOUTUBE_MAX_RETRIES=3
 
 # ============================================
 # CONFIGURAÇÕES DE PROCESSAMENTO
 # ============================================
 FFMPEG_PATH=/usr/bin/ffmpeg
-FFPROBE_PATH=/usr/bin/ffprobe
-MAX_CONCURRENT_PROCESSES=3
-MAX_VIDEO_DURATION=7200
 MAX_FILE_SIZE=104857600
-TEMP_DIR=./uploads/temp
 UPLOAD_DIR=./uploads
-KEEP_VIDEO_DAYS=7
-DELETE_TEMP_FILES_AFTER=24
-
-# ============================================
-# CONFIGURAÇÕES DE ARMAZENAMENTO
-# ============================================
-ALLOWED_AUDIO_FORMATS=mp3,wav,flac,ogg,m4a
-DEFAULT_AUDIO_QUALITY=128
-ENABLE_AUDIO_SEPARATION=true
-MAX_SEPARATION_TRACKS=10
-
-# ============================================
-# CONFIGURAÇÕES DE EMAIL (OPCIONAL)
-# ============================================
-# SMTP_HOST=smtp.gmail.com
-# SMTP_PORT=587
-# SMTP_SECURE=false
-# SMTP_USER=seu-email@gmail.com
-# SMTP_PASS=sua-senha-app
-# EMAIL_FROM=noreply@youraudioextractor.com
-
-# ============================================
-# CONFIGURAÇÕES DO GOOGLE OAUTH (OPCIONAL)
-# ============================================
-# GOOGLE_CLIENT_ID=seu-client-id
-# GOOGLE_CLIENT_SECRET=seu-client-secret
-# GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
+TEMP_DIR=./uploads/temp
 
 # ============================================
 # CONFIGURAÇÕES DE LIMITES
@@ -298,28 +288,12 @@ DAILY_LIMIT_FREE=5
 DAILY_LIMIT_PREMIUM=50
 MAX_DURATION_FREE=1800
 MAX_DURATION_PREMIUM=7200
-
-# ============================================
-# CONFIGURAÇÕES DE LOG
-# ============================================
-LOG_LEVEL=info
-LOG_FILE=./logs/app.log
-LOG_MAX_SIZE=10485760
-LOG_MAX_FILES=10
-
-# ============================================
-# CONFIGURAÇÕES DE CACHE
-# ============================================
-CACHE_TTL=3600
-ENABLE_CACHE=true
-REDIS_HOST=localhost
-REDIS_PORT=6379
 EOF
     
-    log "✅ Arquivo .env criado em: $ENV_FILE"
+    log "✅ Arquivo .env criado!"
     
-    # Criar arquivo de exemplo
-    ENV_EXAMPLE_FILE="../.env.example"
+    # Criar arquivo .env.example se não existir
+    ENV_EXAMPLE_FILE="$(dirname "$ENV_FILE")/.env.example"
     if [ ! -f "$ENV_EXAMPLE_FILE" ]; then
         cat > "$ENV_EXAMPLE_FILE" << EOF
 # Copie este arquivo para .env e ajuste as configurações
@@ -339,40 +313,59 @@ EOF
         log "✅ Arquivo .env.example criado"
     fi
     
-    # Criar diretórios necessários
-    echo ""
-    echo "📁 Criando diretórios..."
-    mkdir -p ../uploads/{audio,video,temp}
-    mkdir -p ../logs
-    chmod -R 755 ../uploads
-    
     # Informações finais
     echo ""
     echo -e "${GREEN}=================================================${NC}"
     echo -e "${BLUE}✅ INSTALAÇÃO DO BANCO CONCLUÍDA!${NC}"
     echo -e "${GREEN}=================================================${NC}"
     echo ""
-    echo "📋 RESUMO DA CONFIGURAÇÃO:"
-    echo "   Banco de dados: $DB_NAME"
+    echo "📋 RESUMO:"
+    echo "   Banco: $DB_NAME"
     echo "   Host: $DB_HOST:$DB_PORT"
-    
-    if [ "$CREATE_APP_USER" = true ]; then
-        echo "   Usuário da aplicação: $APP_USER"
-    else
-        echo "   Usuário: $DB_USER"
-    fi
-    
+    echo "   Usuário: $FINAL_DB_USER"
     echo "   Arquivo .env: $ENV_FILE"
     echo ""
     echo "⚠️  PRÓXIMOS PASSOS:"
-    echo "   1. Edite o arquivo .env com suas configurações reais"
-    echo "   2. Configure uma chave da API do YouTube"
-    echo "   3. Instale as dependências: npm install"
-    echo "   4. Inicie o servidor: npm start"
+    echo "   1. Configure YOUTUBE_API_KEY no arquivo .env"
+    echo "   2. Execute: npm install"
+    echo "   3. Execute: npm start"
     echo ""
-    echo "🔑 Dica: Para segurança, altere as chaves SESSION_SECRET e JWT_SECRET"
+    echo "🔧 Para testar a conexão:"
+    echo "   mysql -h $DB_HOST -P $DB_PORT -u $FINAL_DB_USER -p'SUA_SENHA' -D $DB_NAME"
     
 else
     error "❌ Erro ao criar banco de dados."
+    
+    # Tentar diagnóstico
+    echo ""
+    echo "🔍 Tentando diagnóstico..."
+    
+    # Verificar se o banco foi criado
+    if [ -z "$DB_PASS" ]; then
+        mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e "SHOW DATABASES LIKE '$DB_NAME';" | grep -q "$DB_NAME"
+    else
+        mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" -e "SHOW DATABASES LIKE '$DB_NAME';" | grep -q "$DB_NAME"
+    fi
+    
+    if [ $? -eq 0 ]; then
+        warn "Banco de dados foi criado, mas houve erro nas tabelas."
+        echo "Tente executar o schema.sql manualmente:"
+        echo "mysql -u $FINAL_DB_USER -p $DB_NAME < schema.sql"
+    fi
+    
     exit 1
+fi
+
+# Limpar arquivo temporário
+rm -f "$LOCAL_SCHEMA_FILE"
+
+# Verificar se o usuário quer criar diretórios
+read -p "📁 Criar diretórios de uploads? (s/n): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Ss]$ ]]; then
+    BASE_DIR="$(dirname "$ENV_FILE")"
+    mkdir -p "$BASE_DIR/uploads"{/audio,/video,/temp}
+    mkdir -p "$BASE_DIR/logs"
+    chmod -R 755 "$BASE_DIR/uploads"
+    log "Diretórios criados em: $BASE_DIR"
 fi
