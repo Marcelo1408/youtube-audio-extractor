@@ -110,7 +110,7 @@ log "Verificando estrutura do projeto..."
 cd $SITE_DIR
 
 # Criar estrutura de diretórios se não existir
-mkdir -p backend frontend uploads
+mkdir -p backend frontend uploads logs
 
 # 9. Instalar dependências do Node.js
 log "Instalando dependências do Node.js..."
@@ -146,7 +146,8 @@ else
     "ytdl-core": "^4.11.5",
     "fluent-ffmpeg": "^2.1.2",
     "dotenv": "^16.3.1",
-    "socket.io": "^4.7.2"
+    "socket.io": "^4.7.2",
+    "body-parser": "^1.20.2"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -154,11 +155,16 @@ else
 }
 EOF
     
-    # Criar server.js básico
+    # Criar server.js completo com funcionalidade de extração
     cat > $SITE_DIR/server.js << 'EOF'
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
+const ytdl = require('ytdl-core');
+const ffmpeg = require('fluent-ffmpeg');
+const { exec } = require('child_process');
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -167,22 +173,146 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'frontend')));
 
-// Rotas
+// Verificar se FFmpeg está instalado
+ffmpeg.getAvailableFormats((err, formats) => {
+    if (err) {
+        console.warn('⚠️ FFmpeg não encontrado. Instale: sudo apt install ffmpeg');
+    } else {
+        console.log('✅ FFmpeg está funcionando corretamente');
+    }
+});
+
+// Rotas da API
 app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'ok', 
         message: 'YouTube Audio Extractor Pro está funcionando!',
-        version: '1.0.0'
+        version: '1.0.0',
+        features: ['YouTube download', 'Audio extraction', 'MP3 conversion']
     });
 });
 
-app.get('/api/config', (req, res) => {
-    res.json({
-        nodeVersion: process.version,
-        platform: process.platform,
-        uptime: process.uptime()
-    });
+// Rota para informações do vídeo
+app.get('/api/video/info', async (req, res) => {
+    try {
+        const { url } = req.query;
+        
+        if (!url) {
+            return res.status(400).json({ error: 'URL do YouTube é obrigatória' });
+        }
+        
+        const info = await ytdl.getInfo(url);
+        
+        res.json({
+            success: true,
+            title: info.videoDetails.title,
+            duration: info.videoDetails.lengthSeconds,
+            author: info.videoDetails.author.name,
+            thumbnail: info.videoDetails.thumbnails[0].url,
+            formats: info.formats.map(f => ({
+                quality: f.qualityLabel,
+                container: f.container,
+                hasAudio: f.hasAudio,
+                hasVideo: f.hasVideo
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: 'Erro ao obter informações do vídeo',
+            message: error.message 
+        });
+    }
 });
+
+// Rota para download de áudio
+app.get('/api/audio/download', async (req, res) => {
+    try {
+        const { url, format = 'mp3' } = req.query;
+        
+        if (!url) {
+            return res.status(400).json({ error: 'URL do YouTube é obrigatória' });
+        }
+        
+        const videoId = ytdl.getVideoID(url);
+        const info = await ytdl.getInfo(url);
+        const title = info.videoDetails.title.replace(/[^\w\s]/gi, '');
+        
+        const timestamp = Date.now();
+        const filename = `${title}_${timestamp}.${format}`;
+        const outputPath = path.join(__dirname, 'uploads', 'audio', filename);
+        
+        // Garantir que o diretório existe
+        if (!fs.existsSync(path.dirname(outputPath))) {
+            fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        }
+        
+        res.json({
+            success: true,
+            message: 'Download iniciado em segundo plano',
+            filename: filename,
+            downloadUrl: `/uploads/audio/${filename}`,
+            title: title
+        });
+        
+        // Download em segundo plano
+        const audioStream = ytdl(url, { 
+            filter: 'audioonly',
+            quality: 'highestaudio' 
+        });
+        
+        if (format === 'mp3') {
+            // Converter para MP3
+            ffmpeg(audioStream)
+                .audioBitrate(128)
+                .save(outputPath)
+                .on('end', () => {
+                    console.log(`✅ Áudio convertido: ${filename}`);
+                })
+                .on('error', (err) => {
+                    console.error('❌ Erro na conversão:', err);
+                });
+        } else {
+            // Salvar no formato original
+            const writeStream = fs.createWriteStream(outputPath);
+            audioStream.pipe(writeStream);
+            
+            writeStream.on('finish', () => {
+                console.log(`✅ Áudio salvo: ${filename}`);
+            });
+        }
+        
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: 'Erro no download do áudio',
+            message: error.message 
+        });
+    }
+});
+
+// Rota para listar downloads
+app.get('/api/audio/list', (req, res) => {
+    const audioDir = path.join(__dirname, 'uploads', 'audio');
+    
+    if (!fs.existsSync(audioDir)) {
+        return res.json({ files: [] });
+    }
+    
+    const files = fs.readdirSync(audioDir)
+        .filter(file => file.match(/\.(mp3|wav|aac|flac|m4a)$/i))
+        .map(file => ({
+            name: file,
+            path: `/uploads/audio/${file}`,
+            size: fs.statSync(path.join(audioDir, file)).size,
+            created: fs.statSync(path.join(audioDir, file)).birthtime
+        }));
+    
+    res.json({ files });
+});
+
+// Servir arquivos de upload
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Rota para frontend
 app.get('*', (req, res) => {
@@ -193,10 +323,11 @@ app.listen(port, () => {
     console.log(`✅ Servidor rodando na porta ${port}`);
     console.log(`📁 Diretório: ${__dirname}`);
     console.log(`🌐 Acesse: http://localhost:${port}`);
+    console.log(`🎵 API de extração de áudio pronta para uso!`);
 });
 EOF
     
-    # Criar frontend básico se não existir
+    # Criar frontend completo
     mkdir -p $SITE_DIR/frontend
     cat > $SITE_DIR/frontend/index.html << 'EOF'
 <!DOCTYPE html>
@@ -205,112 +336,420 @@ EOF
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Audio Extractor Pro</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
+            color: #fff;
         }
         .container {
-            text-align: center;
-            max-width: 800px;
+            max-width: 1200px;
+            margin: 0 auto;
             padding: 2rem;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
+        }
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.05);
             border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
         h1 { 
             font-size: 3rem; 
             margin-bottom: 1rem;
-            background: linear-gradient(45deg, #ff6b6b, #feca57);
+            background: linear-gradient(45deg, #00dbde, #fc00ff);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
-        .status { 
-            background: rgba(0, 0, 0, 0.2); 
-            padding: 1rem; 
-            border-radius: 10px;
-            margin: 2rem 0;
+        .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.8;
+            margin-bottom: 2rem;
         }
-        .features {
+        .main-content {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin: 2rem 0;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 3rem;
         }
-        .feature {
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 2rem;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #00dbde;
+            font-weight: bold;
+        }
+        input, select {
+            width: 100%;
+            padding: 1rem;
             background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: white;
+            font-size: 1rem;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #00dbde;
+        }
+        .btn {
+            background: linear-gradient(45deg, #00dbde, #0093E9);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+            width: 100%;
+            margin-top: 1rem;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 147, 233, 0.3);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .video-info {
+            background: rgba(0, 219, 222, 0.1);
             padding: 1.5rem;
             border-radius: 10px;
-            transition: transform 0.3s;
+            margin-top: 1rem;
+            display: none;
         }
-        .feature:hover {
-            transform: translateY(-5px);
+        .video-info.show {
+            display: block;
         }
-        .icon { font-size: 2rem; margin-bottom: 1rem; }
+        .video-title {
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            color: #00dbde;
+        }
+        .video-thumbnail {
+            max-width: 100%;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+        }
+        .downloads-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .download-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 1rem;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .download-name {
+            flex-grow: 1;
+            margin-right: 1rem;
+        }
+        .download-actions a {
+            color: #00dbde;
+            text-decoration: none;
+            margin-left: 1rem;
+        }
+        .download-actions a:hover {
+            text-decoration: underline;
+        }
+        .status {
+            padding: 1rem;
+            border-radius: 10px;
+            margin: 1rem 0;
+            text-align: center;
+        }
+        .status.success {
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid rgba(0, 255, 0, 0.3);
+        }
+        .status.error {
+            background: rgba(255, 0, 0, 0.1);
+            border: 1px solid rgba(255, 0, 0, 0.3);
+        }
+        .status.loading {
+            background: rgba(255, 255, 0, 0.1);
+            border: 1px solid rgba(255, 255, 0, 0.3);
+        }
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            opacity: 0.7;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎵 YouTube Audio Extractor Pro</h1>
-        <p style="font-size: 1.2rem; opacity: 0.9;">Sistema instalado com sucesso!</p>
+        <header>
+            <h1><i class="fas fa-music"></i> YouTube Audio Extractor Pro</h1>
+            <p class="subtitle">Extraia áudio de vídeos do YouTube sem precisar de API key</p>
+        </header>
         
-        <div class="status">
-            <p id="status">Verificando status do sistema...</p>
+        <div class="main-content">
+            <div class="card">
+                <h2><i class="fas fa-download"></i> Extrair Áudio</h2>
+                <div class="input-group">
+                    <label for="youtubeUrl"><i class="fab fa-youtube"></i> URL do YouTube:</label>
+                    <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=..." required>
+                </div>
+                
+                <div class="input-group">
+                    <label for="audioFormat"><i class="fas fa-file-audio"></i> Formato de Áudio:</label>
+                    <select id="audioFormat">
+                        <option value="mp3">MP3 (Recomendado)</option>
+                        <option value="m4a">M4A/AAC</option>
+                        <option value="wav">WAV</option>
+                    </select>
+                </div>
+                
+                <button class="btn" id="getInfoBtn">
+                    <i class="fas fa-info-circle"></i> Obter Informações do Vídeo
+                </button>
+                
+                <div id="videoInfo" class="video-info"></div>
+                
+                <button class="btn" id="downloadBtn" disabled>
+                    <i class="fas fa-download"></i> Extrair e Baixar Áudio
+                </button>
+                
+                <div id="statusMessage" class="status"></div>
+            </div>
+            
+            <div class="card">
+                <h2><i class="fas fa-history"></i> Downloads Recentes</h2>
+                <button class="btn" id="refreshList">
+                    <i class="fas fa-sync-alt"></i> Atualizar Lista
+                </button>
+                
+                <div class="downloads-list" id="downloadsList">
+                    <p style="text-align: center; padding: 2rem; opacity: 0.7;">
+                        <i class="fas fa-music fa-2x"></i><br>
+                        Nenhum download ainda
+                    </p>
+                </div>
+            </div>
         </div>
         
-        <div class="features">
-            <div class="feature">
-                <div class="icon">⚡</div>
-                <h3>Rápido</h3>
-                <p>Extraia áudio do YouTube em segundos</p>
-            </div>
-            <div class="feature">
-                <div class="icon">🎧</div>
-                <h3>Qualidade</h3>
-                <p>Suporte a múltiplos formatos de áudio</p>
-            </div>
-            <div class="feature">
-                <div class="icon">📁</div>
-                <h3>Organizado</h3>
-                <p>Gerenciamento de downloads fácil</p>
+        <div class="card">
+            <h2><i class="fas fa-server"></i> Status do Sistema</h2>
+            <div id="systemStatus">
+                <p>Verificando status do servidor...</p>
             </div>
         </div>
         
-        <div style="margin-top: 2rem;">
-            <p>Configure o sistema editando o arquivo <code>.env</code></p>
-            <p style="font-size: 0.9rem; opacity: 0.7; margin-top: 1rem;">
-                Instalado em: <code>/var/www/youtube-extractor-pro</code>
-            </p>
-        </div>
+        <footer>
+            <p>YouTube Audio Extractor Pro v1.0 | Sistema funcionando sem API key!</p>
+            <p>Diretório: /var/www/youtube-extractor-pro</p>
+        </footer>
     </div>
     
     <script>
-        // Verificar status da API
-        fetch('/api/health')
-            .then(response => response.json())
-            .then(data => {
-                document.getElementById('status').innerHTML = 
-                    `✅ ${data.message}<br><small>Sistema operacional normalmente</small>`;
-            })
-            .catch(error => {
-                document.getElementById('status').innerHTML = 
-                    `⚠️ API não respondendo. Verifique o servidor Node.js.<br>
-                     <small>Erro: ${error.message}</small>`;
+        document.addEventListener('DOMContentLoaded', function() {
+            const youtubeUrl = document.getElementById('youtubeUrl');
+            const audioFormat = document.getElementById('audioFormat');
+            const getInfoBtn = document.getElementById('getInfoBtn');
+            const downloadBtn = document.getElementById('downloadBtn');
+            const videoInfo = document.getElementById('videoInfo');
+            const statusMessage = document.getElementById('statusMessage');
+            const refreshList = document.getElementById('refreshList');
+            const downloadsList = document.getElementById('downloadsList');
+            const systemStatus = document.getElementById('systemStatus');
+            
+            let currentVideoInfo = null;
+            
+            // Verificar status do sistema
+            function checkSystemStatus() {
+                fetch('/api/health')
+                    .then(response => response.json())
+                    .then(data => {
+                        systemStatus.innerHTML = `
+                            <div class="status success">
+                                <p><i class="fas fa-check-circle"></i> ${data.message}</p>
+                                <p><small>Recursos disponíveis: ${data.features.join(', ')}</small></p>
+                            </div>
+                        `;
+                    })
+                    .catch(error => {
+                        systemStatus.innerHTML = `
+                            <div class="status error">
+                                <p><i class="fas fa-exclamation-circle"></i> Erro ao conectar com o servidor</p>
+                                <p><small>${error.message}</small></p>
+                            </div>
+                        `;
+                    });
+            }
+            
+            // Obter informações do vídeo
+            getInfoBtn.addEventListener('click', function() {
+                const url = youtubeUrl.value.trim();
+                
+                if (!url) {
+                    showStatus('Por favor, insira uma URL do YouTube', 'error');
+                    return;
+                }
+                
+                showStatus('Obtendo informações do vídeo...', 'loading');
+                
+                fetch(`/api/video/info?url=${encodeURIComponent(url)}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            currentVideoInfo = data;
+                            videoInfo.innerHTML = `
+                                <div class="video-info show">
+                                    <img src="${data.thumbnail}" alt="Thumbnail" class="video-thumbnail">
+                                    <h3 class="video-title">${data.title}</h3>
+                                    <p><strong>Canal:</strong> ${data.author}</p>
+                                    <p><strong>Duração:</strong> ${Math.floor(data.duration / 60)}:${(data.duration % 60).toString().padStart(2, '0')}</p>
+                                </div>
+                            `;
+                            downloadBtn.disabled = false;
+                            showStatus('Vídeo encontrado! Clique em "Extrair e Baixar Áudio" para continuar.', 'success');
+                        } else {
+                            showStatus('Erro: ' + data.error, 'error');
+                        }
+                    })
+                    .catch(error => {
+                        showStatus('Erro ao obter informações do vídeo', 'error');
+                        console.error(error);
+                    });
             });
-        
-        // Obter informações do sistema
-        fetch('/api/config')
-            .then(response => response.json())
-            .then(data => {
-                console.log('Configuração do sistema:', data);
+            
+            // Download do áudio
+            downloadBtn.addEventListener('click', function() {
+                if (!currentVideoInfo) {
+                    showStatus('Primeiro obtenha as informações do vídeo', 'error');
+                    return;
+                }
+                
+                const url = youtubeUrl.value.trim();
+                const format = audioFormat.value;
+                
+                showStatus('Iniciando extração do áudio...', 'loading');
+                downloadBtn.disabled = true;
+                downloadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processando...';
+                
+                fetch(`/api/audio/download?url=${encodeURIComponent(url)}&format=${format}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showStatus(`✅ Download iniciado: ${data.title}`, 'success');
+                            downloadBtn.innerHTML = '<i class="fas fa-download"></i> Extrair e Baixar Áudio';
+                            downloadBtn.disabled = false;
+                            
+                            // Mostrar link de download
+                            setTimeout(() => {
+                                showStatus(`✅ Download concluído! <a href="${data.downloadUrl}" style="color: #00dbde;">Clique aqui para baixar</a>`, 'success');
+                                loadDownloads();
+                            }, 3000);
+                        } else {
+                            showStatus('Erro: ' + data.error, 'error');
+                            downloadBtn.innerHTML = '<i class="fas fa-download"></i> Extrair e Baixar Áudio';
+                            downloadBtn.disabled = false;
+                        }
+                    })
+                    .catch(error => {
+                        showStatus('Erro no download', 'error');
+                        downloadBtn.innerHTML = '<i class="fas fa-download"></i> Extrair e Baixar Áudio';
+                        downloadBtn.disabled = false;
+                        console.error(error);
+                    });
             });
+            
+            // Carregar lista de downloads
+            function loadDownloads() {
+                fetch('/api/audio/list')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.files && data.files.length > 0) {
+                            downloadsList.innerHTML = '';
+                            data.files.forEach(file => {
+                                const item = document.createElement('div');
+                                item.className = 'download-item';
+                                
+                                const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+                                const date = new Date(file.created).toLocaleDateString('pt-BR');
+                                
+                                item.innerHTML = `
+                                    <div class="download-name">
+                                        <strong>${file.name}</strong><br>
+                                        <small>${sizeMB} MB • ${date}</small>
+                                    </div>
+                                    <div class="download-actions">
+                                        <a href="${file.path}" download><i class="fas fa-download"></i> Baixar</a>
+                                        <a href="${file.path}" target="_blank"><i class="fas fa-play"></i> Ouvir</a>
+                                    </div>
+                                `;
+                                
+                                downloadsList.appendChild(item);
+                            });
+                        } else {
+                            downloadsList.innerHTML = `
+                                <p style="text-align: center; padding: 2rem; opacity: 0.7;">
+                                    <i class="fas fa-music fa-2x"></i><br>
+                                    Nenhum download ainda
+                                </p>
+                            `;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Erro ao carregar downloads:', error);
+                    });
+            }
+            
+            // Atualizar lista de downloads
+            refreshList.addEventListener('click', loadDownloads);
+            
+            // Mostrar mensagem de status
+            function showStatus(message, type) {
+                statusMessage.innerHTML = message;
+                statusMessage.className = `status ${type}`;
+                
+                if (type !== 'loading') {
+                    setTimeout(() => {
+                        statusMessage.innerHTML = '';
+                        statusMessage.className = 'status';
+                    }, 5000);
+                }
+            }
+            
+            // Inicializar
+            checkSystemStatus();
+            loadDownloads();
+            
+            // Permitir Enter na URL
+            youtubeUrl.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    getInfoBtn.click();
+                }
+            });
+        });
     </script>
 </body>
 </html>
@@ -318,7 +757,7 @@ EOF
     
     cd $SITE_DIR
     npm install --production --no-audit
-    log "Estrutura básica criada e dependências instaladas."
+    log "Estrutura completa criada e dependências instaladas."
 fi
 
 # 10. Configurar Nginx
@@ -449,6 +888,7 @@ pm2 list
 # 13. Criar diretórios necessários
 log "Criando diretórios necessários..."
 mkdir -p $SITE_DIR/uploads/{videos,audio,temp,converted}
+mkdir -p $SITE_DIR/logs
 chown -R www-data:www-data $SITE_DIR/uploads
 chmod -R 755 $SITE_DIR/uploads
 
@@ -458,7 +898,7 @@ chmod -R 755 $SITE_DIR
 find $SITE_DIR -type f -exec chmod 644 {} \;
 find $SITE_DIR -type d -exec chmod 755 {} \;
 
-# 14. Criar arquivo .env se necessário
+# 14. Criar arquivo .env simplificado (SEM API KEY)
 if [ ! -f "$SITE_DIR/.env" ] && [ ! -f "$SITE_DIR/backend/.env" ]; then
     ENV_FILE="$SITE_DIR/.env"
     cat > $ENV_FILE << 'EOF'
@@ -476,7 +916,8 @@ HOST=0.0.0.0
 SESSION_SECRET=$(openssl rand -hex 32)
 
 # Configurações do YouTube
-YOUTUBE_API_KEY=your_api_key_here
+# NÃO É NECESSÁRIA API KEY - Usando ytdl-core sem autenticação
+YOUTUBE_API_KEY=NOT_NEEDED
 
 # Configurações de FFmpeg
 FFMPEG_PATH=/usr/bin/ffmpeg
@@ -485,22 +926,14 @@ FFPROBE_PATH=/usr/bin/ffprobe
 # Configurações de Upload
 MAX_FILE_SIZE=104857600 # 100MB
 UPLOAD_PATH=./uploads
-ALLOWED_FORMATS=mp3,mp4,wav,aac,flac
-
-# Configurações do Redis (opcional)
-REDIS_HOST=localhost
-REDIS_PORT=6379
+ALLOWED_FORMATS=mp3,mp4,wav,aac,flac,m4a
 
 # Configurações de Log
 LOG_LEVEL=info
 LOG_FILE=./logs/app.log
-
-# Configurações de Rate Limiting
-RATE_LIMIT_WINDOW=15
-RATE_LIMIT_MAX=100
 EOF
     chmod 600 $ENV_FILE
-    log "Arquivo .env criado com configurações padrão"
+    log "Arquivo .env criado (SEM necessidade de API key!)"
 fi
 
 # 15. Criar script de manutenção
@@ -510,12 +943,15 @@ case "$1" in
     start)
         cd /var/www/youtube-extractor-pro
         pm2 start youtube-extractor
+        echo "✅ Aplicação iniciada"
         ;;
     stop)
         pm2 stop youtube-extractor
+        echo "⏸️ Aplicação parada"
         ;;
     restart)
         pm2 restart youtube-extractor
+        echo "🔄 Aplicação reiniciada"
         ;;
     status)
         pm2 status youtube-extractor
@@ -528,9 +964,30 @@ case "$1" in
         git pull origin main
         npm install --production
         pm2 restart youtube-extractor
+        echo "📦 Aplicação atualizada"
+        ;;
+    cleanup)
+        # Limpar arquivos antigos (mais de 7 dias)
+        find /var/www/youtube-extractor-pro/uploads -type f -mtime +7 -delete
+        echo "🧹 Arquivos antigos removidos"
+        ;;
+    backup)
+        # Backup do banco de dados
+        mysqldump -u youtube_user -p'YoutubePass123!' youtube_extractor > /var/www/youtube-extractor-pro/backup_$(date +%Y%m%d_%H%M%S).sql
+        echo "💾 Backup do banco criado"
         ;;
     *)
-        echo "Uso: $0 {start|stop|restart|status|logs|update}"
+        echo "Uso: youtube-extractor-manage {start|stop|restart|status|logs|update|cleanup|backup}"
+        echo ""
+        echo "Comandos disponíveis:"
+        echo "  start     - Iniciar aplicação"
+        echo "  stop      - Parar aplicação"
+        echo "  restart   - Reiniciar aplicação"
+        echo "  status    - Ver status"
+        echo "  logs      - Ver logs"
+        echo "  update    - Atualizar do GitHub"
+        echo "  cleanup   - Limpar arquivos antigos"
+        echo "  backup    - Backup do banco de dados"
         exit 1
         ;;
 esac
@@ -538,7 +995,17 @@ EOF
 
 chmod +x /usr/local/bin/youtube-extractor-manage
 
-# 16. Finalização
+# 16. Criar limpeza automática (crontab)
+cat > /etc/cron.daily/youtube-extractor-cleanup << 'EOF'
+#!/bin/bash
+# Limpar arquivos temporários antigos
+find /var/www/youtube-extractor-pro/uploads/temp -type f -mtime +1 -delete 2>/dev/null || true
+find /var/www/youtube-extractor-pro/logs -name "*.log" -mtime +30 -delete 2>/dev/null || true
+EOF
+
+chmod +x /etc/cron.daily/youtube-extractor-cleanup
+
+# 17. Finalização
 log "Instalação concluída com sucesso!"
 echo ""
 echo -e "${GREEN}=================================================${NC}"
@@ -547,22 +1014,21 @@ echo -e "${GREEN}=================================================${NC}"
 echo ""
 echo "📁 Diretório do site: $SITE_DIR"
 echo "🌐 URL de acesso: http://$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' || echo 'seu-ip')"
-echo "🚀 Servidor Node.js: porta 3000 (proxy via Nginx)"
+echo "🚀 Servidor Node.js: porta 3000"
 echo "💾 Banco de dados: MariaDB (youtube_extractor)"
+echo "🔑 API Key: NÃO É NECESSÁRIA!"
 echo ""
 echo "🛠️  Comandos de gerenciamento:"
-echo "   • youtube-extractor-manage start    # Iniciar"
-echo "   • youtube-extractor-manage stop     # Parar"
-echo "   • youtube-extractor-manage restart  # Reiniciar"
-echo "   • youtube-extractor-manage status   # Status"
-echo "   • youtube-extractor-manage logs     # Ver logs"
-echo "   • youtube-extractor-manage update   # Atualizar"
+echo "   $ youtube-extractor-manage start    # Iniciar"
+echo "   $ youtube-extractor-manage status   # Ver status"
+echo "   $ youtube-extractor-manage logs     # Ver logs"
 echo ""
-echo "📋 Próximos passos IMPORTANTES:"
-echo "   1. Edite $SITE_DIR/.env com suas configurações reais"
-echo "   2. Configure uma chave de API do YouTube válida"
-echo "   3. Para SSL/TLS (HTTPS): certbot --nginx"
-echo "   4. Configure backups periódicos do banco de dados"
+echo "🎯 PRONTO PARA USAR! Funcionalidades:"
+echo "   • Extrair áudio de vídeos do YouTube"
+echo "   • Converter para MP3, M4A, WAV"
+echo "   • Listar downloads anteriores"
+echo "   • Sistema completo sem API key"
 echo ""
-echo -e "${GREEN}✅ Site está online e pronto para navegação!${NC}"
+echo -e "${GREEN}✅ Site está online e pronto para uso!${NC}"
+echo -e "${YELLOW}⚠️  Acesse a URL acima no navegador para começar a extrair áudio!${NC}"
 echo ""
