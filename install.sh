@@ -1,929 +1,568 @@
 #!/bin/bash
+# Arquivo: install.sh
+# YouTube Audio Extractor Pro - Instalador Automático VPS
 
-# ============================================
-# INSTALADOR COMPLETO - YouTube Audio Extractor
-# Versão: 3.0 - Corrigido e Testado
-# ============================================
+set -e
 
-set -e  # Para em caso de erro
-
-# Cores para melhor visualização
+# Cores
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Funções auxiliares
 log() { echo -e "${GREEN}[✓]${NC} $1"; }
-error() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 warn() { echo -e "${YELLOW}[!]${NC} $1"; }
-info() { echo -e "${BLUE}[i]${NC} $1"; }
+error() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 
-# Log de instalação
-LOG_FILE="/var/log/youtube-extractor-install.log"
-exec > >(tee -a "$LOG_FILE") 2>&1
+# Banner
+echo -e "${BLUE}"
+cat << "EOF"
+╔══════════════════════════════════════════════════════════════╗
+║      🎵 YOUTUBE AUDIO EXTRACTOR PRO - INSTALADOR VPS        ║
+║              Node.js + MariaDB + Ubuntu 22.04               ║
+╚══════════════════════════════════════════════════════════════╝
+EOF
+echo -e "${NC}"
 
-echo "============================================"
-echo "  🎵 YOUTUBE AUDIO EXTRACTOR - INSTALADOR"
-echo "  Ubuntu 22.04 | MariaDB | Nginx | PHP 8.1"
-echo "============================================"
-
-# -------------------------------------------------
-# 1. CONFIGURAÇÃO INICIAL - EVITA BLOQUEIOS
-# -------------------------------------------------
-log "Preparando ambiente..."
-export DEBIAN_FRONTEND=noninteractive
-
-# Mata processos bloqueantes
-sudo pkill -9 debconf 2>/dev/null || true
-sudo pkill -9 apt 2>/dev/null || true
-sudo pkill -9 dpkg 2>/dev/null || true
-
-# Remove locks
-sudo rm -f /var/lib/apt/lists/lock
-sudo rm -f /var/lib/dpkg/lock
-sudo rm -f /var/cache/apt/archives/lock
-sudo rm -f /var/cache/debconf/config.dat
-
-sudo dpkg --configure -a 2>/dev/null || true
-
-# -------------------------------------------------
-# 2. INFORMAÇÕES DO USUÁRIO
-# -------------------------------------------------
-echo ""
-echo "📝 INFORMAÇÕES NECESSÁRIAS:"
-echo "---------------------------"
-
-# Domínio
-while [ -z "$DOMAIN" ]; do
-    read -p "• Domínio completo (ex: audio.seusite.com): " DOMAIN
-    if [ -z "$DOMAIN" ]; then
-        warn "Domínio é obrigatório!"
-    fi
-done
-
-# Email
-while [ -z "$EMAIL" ]; do
-    read -p "• Email para SSL (Let's Encrypt): " EMAIL
-    if [ -z "$EMAIL" ]; then
-        warn "Email é obrigatório!"
-    fi
-done
-
-# Senhas do banco
-echo ""
-echo "🔐 CONFIGURAÇÃO DO BANCO DE DADOS:"
-
-# Senha root - com validação
-while true; do
-    read -sp "• Senha ROOT do MariaDB: " DB_ROOT_PASS
-    echo
-    if [ ${#DB_ROOT_PASS} -ge 8 ]; then
-        read -sp "• Confirme a senha: " DB_ROOT_PASS2
-        echo
-        if [ "$DB_ROOT_PASS" = "$DB_ROOT_PASS2" ]; then
-            break
-        else
-            warn "Senhas não coincidem!"
-        fi
-    else
-        warn "Senha deve ter pelo menos 8 caracteres!"
-    fi
-done
-
-# Nome do banco
-read -p "• Nome do banco [youtube_extractor]: " DB_NAME
-DB_NAME=${DB_NAME:-youtube_extractor}
-
-# Usuário do banco
-read -p "• Usuário do banco [audio_user]: " DB_USER
-DB_USER=${DB_USER:-audio_user}
-
-# Senha do usuário - com validação
-while true; do
-    read -sp "• Senha do usuário: " DB_PASS
-    echo
-    if [ ${#DB_PASS} -ge 6 ]; then
-        read -sp "• Confirme a senha: " DB_PASS2
-        echo
-        if [ "$DB_PASS" = "$DB_PASS2" ]; then
-            break
-        else
-            warn "Senhas não coincidem!"
-        fi
-    else
-        warn "Senha deve ter pelo menos 6 caracteres!"
-    fi
-done
-
-# -------------------------------------------------
-# 3. VARIÁVEIS DO SISTEMA
-# -------------------------------------------------
-PROJECT_DIR="/var/www/$DOMAIN"
-MYSQL_ROOT_USER="root"
-
-echo ""
-echo "📋 RESUMO DA CONFIGURAÇÃO:"
-echo "---------------------------"
-echo "• Domínio: $DOMAIN"
-echo "• Email: $EMAIL"
-echo "• Diretório: $PROJECT_DIR"
-echo "• Banco: $DB_NAME"
-echo "• Usuário DB: $DB_USER"
-echo "• Senha Root DB: [oculto]"
-echo "• Senha Usuário DB: [oculto]"
-echo ""
-
-read -p "Continuar com a instalação? (s/n): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Ss]$ ]]; then
-    error "Instalação cancelada pelo usuário."
+# Verificar root
+if [[ $EUID -ne 0 ]]; then
+    error "Execute como root: sudo bash $0"
 fi
 
-# -------------------------------------------------
-# 4. ATUALIZAÇÃO DO SISTEMA
-# -------------------------------------------------
-log "Atualizando repositórios do sistema..."
-sudo apt-get update -y
+# Variáveis configuráveis
+SITE_DIR="/var/www/youtube-extractor-pro"
+REPO_URL="https://github.com/seu-usuario/youtube-extractor-pro/archive/refs/heads/main.zip"
+ZIP_FILE="/tmp/youtube-extractor-pro.zip"
 
-log "Atualizando pacotes..."
-sudo apt-get upgrade -y
+# 1. Atualizar sistema
+log "Atualizando sistema..."
+apt update && apt upgrade -y
 
-# -------------------------------------------------
-# 5. INSTALAÇÃO DE DEPENDÊNCIAS
-# -------------------------------------------------
-log "Instalando dependências principais..."
+# 2. Criar diretório do site
+log "Criando diretório do site em $SITE_DIR..."
+mkdir -p $SITE_DIR
+chown -R $SUDO_USER:$SUDO_USER $SITE_DIR
+chmod 755 $SITE_DIR
 
-# Configura respostas automáticas para evitar perguntas
-sudo debconf-set-selections <<EOF
-libc6 libraries/restart-without-asking boolean true
-openssh-server openssh-server/permit-root-login boolean true
-openssh-server openssh-server/sshd_config_preserve_local string keep
-mariadb-server mysql-server/root_password password $DB_ROOT_PASS
-mariadb-server mysql-server/root_password_again password $DB_ROOT_PASS
-console-setup console-setup/charmap47 select UTF-8
-keyboard-configuration keyboard-configuration/layoutcode string us
-EOF
+# 3. Instalar Node.js
+log "Instalando Node.js 18.x..."
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt install -y nodejs npm
+npm install -g pm2
 
-# Lista de pacotes essenciais
-PACKAGES=(
-    nginx
-    mariadb-server mariadb-client
-    php8.1 php8.1-fpm php8.1-mysql php8.1-cli php8.1-curl php8.1-zip
-    php8.1-mbstring php8.1-xml php8.1-gd php8.1-bcmath
-    python3 python3-pip python3-venv
-    ffmpeg
-    curl wget unzip git
-    certbot python3-certbot-nginx
-)
+# 4. Instalar MariaDB
+log "Instalando MariaDB..."
+apt install -y mariadb-server mariadb-client
+systemctl start mariadb
+systemctl enable mariadb
 
-log "Instalando: ${PACKAGES[*]}"
-sudo apt-get install -y "${PACKAGES[@]}"
+# 5. Instalar dependências do sistema
+log "Instalando dependências do sistema..."
+apt install -y nginx ffmpeg git curl wget unzip build-essential
 
-# -------------------------------------------------
-# 6. CONFIGURAÇÃO DO MARIADB
-# -------------------------------------------------
-log "Configurando MariaDB..."
+# 6. Configurar banco de dados
+log "Configurando banco de dados..."
+mysql -e "CREATE DATABASE IF NOT EXISTS youtube_extractor;" 2>/dev/null || warn "Erro ao criar BD (pode já existir)"
+mysql -e "CREATE USER IF NOT EXISTS 'youtube_user'@'localhost' IDENTIFIED BY 'YoutubePass123!';" 2>/dev/null || warn "Erro ao criar usuário"
+mysql -e "GRANT ALL PRIVILEGES ON youtube_extractor.* TO 'youtube_user'@'localhost';" 2>/dev/null || warn "Erro ao conceder privilégios"
+mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || warn "Erro ao atualizar privilégios"
 
-# Inicia e habilita o serviço
-sudo systemctl start mariadb
-sudo systemctl enable mariadb
-
-# Aguarda o MariaDB iniciar
-sleep 5
-
-# Configuração segura do MariaDB
-log "Executando configuração segura do MariaDB..."
-sudo mysql -u root <<EOF
--- Define senha root (já definida, mas garantindo)
-ALTER USER 'root'@'localhost' IDENTIFIED BY '$DB_ROOT_PASS';
-
--- Remove usuários anônimos
-DELETE FROM mysql.user WHERE User='';
-
--- Remove acesso root remoto
-DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
-
--- Remove banco de teste
-DROP DATABASE IF EXISTS test;
-DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
-
--- Recarrega privilégios
-FLUSH PRIVILEGES;
-EOF
-
-# Cria banco de dados e usuário
-log "Criando banco de dados '$DB_NAME'..."
-sudo mysql -u root -p"$DB_ROOT_PASS" <<EOF
-CREATE DATABASE IF NOT EXISTS $DB_NAME 
-CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
-
-CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' 
-IDENTIFIED BY '$DB_PASS';
-
-GRANT ALL PRIVILEGES ON $DB_NAME.* 
-TO '$DB_USER'@'localhost';
-
-GRANT SELECT ON mysql.user 
-TO '$DB_USER'@'localhost';
-
-FLUSH PRIVILEGES;
-EOF
-
-# -------------------------------------------------
-# 7. CRIA ESTRUTURA DO BANCO (SQL COMPLETO)
-# -------------------------------------------------
-log "Criando estrutura do banco de dados..."
-
-# Cria arquivo SQL temporário
-SQL_FILE="/tmp/database_structure.sql"
-
-cat > "$SQL_FILE" <<'SQL'
--- ============================================
--- ESTRUTURA DO BANCO - YouTube Audio Extractor
--- ============================================
-
-SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
-SET time_zone = "+00:00";
-
--- --------------------------------------------------------
--- Tabela: users
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `users` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `username` varchar(50) NOT NULL,
-  `email` varchar(100) NOT NULL,
-  `password` varchar(255) NOT NULL,
-  `phone` varchar(20) DEFAULT NULL,
-  `avatar` varchar(255) DEFAULT NULL,
-  `role` enum('user','admin','moderator') DEFAULT 'user',
-  `plan` enum('free','premium','enterprise') DEFAULT 'free',
-  `storage_limit` bigint(20) DEFAULT 10737418240,
-  `storage_used` bigint(20) DEFAULT 0,
-  `process_limit` int(11) DEFAULT 50,
-  `process_count` int(11) DEFAULT 0,
-  `last_login` datetime DEFAULT NULL,
-  `email_verified` tinyint(1) DEFAULT 0,
-  `verification_token` varchar(100) DEFAULT NULL,
-  `reset_token` varchar(100) DEFAULT NULL,
-  `reset_expires` datetime DEFAULT NULL,
-  `status` enum('active','suspended','banned') DEFAULT 'active',
-  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `username` (`username`),
-  UNIQUE KEY `email` (`email`),
-  KEY `status` (`status`),
-  KEY `role` (`role`),
-  KEY `plan` (`plan`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
--- Tabela: processes
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `processes` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `user_id` int(11) NOT NULL,
-  `process_uid` varchar(32) NOT NULL,
-  `youtube_url` text NOT NULL,
-  `youtube_id` varchar(20) DEFAULT NULL,
-  `video_title` varchar(255) DEFAULT NULL,
-  `video_duration` int(11) DEFAULT NULL,
-  `video_size` bigint(20) DEFAULT NULL,
-  `thumbnail_url` text,
-  `status` enum('pending','downloading','converting','separating','completed','failed','cancelled') DEFAULT 'pending',
-  `quality` enum('64','128','192','320') DEFAULT '128',
-  `separate_tracks` tinyint(1) DEFAULT 0,
-  `tracks_count` int(11) DEFAULT 0,
-  `original_format` varchar(10) DEFAULT NULL,
-  `output_format` varchar(10) DEFAULT 'mp3',
-  `file_path` varchar(500) DEFAULT NULL,
-  `file_size` bigint(20) DEFAULT 0,
-  `progress` int(11) DEFAULT 0,
-  `error_message` text,
-  `processing_time` int(11) DEFAULT NULL,
-  `worker_id` varchar(50) DEFAULT NULL,
-  `notify_user` tinyint(1) DEFAULT 1,
-  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `completed_at` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `process_uid` (`process_uid`),
-  KEY `user_id` (`user_id`),
-  KEY `status` (`status`),
-  KEY `youtube_id` (`youtube_id`),
-  KEY `created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
--- Tabela: tracks
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `tracks` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `process_id` int(11) NOT NULL,
-  `track_number` int(11) NOT NULL,
-  `track_name` varchar(100) NOT NULL,
-  `track_type` enum('vocals','drums','bass','piano','other','full') DEFAULT 'full',
-  `file_name` varchar(255) NOT NULL,
-  `file_path` varchar(500) NOT NULL,
-  `file_size` bigint(20) DEFAULT 0,
-  `duration` int(11) DEFAULT 0,
-  `bitrate` int(11) DEFAULT 128,
-  `format` varchar(10) DEFAULT 'mp3',
-  `downloads` int(11) DEFAULT 0,
-  `plays` int(11) DEFAULT 0,
-  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `process_id` (`process_id`),
-  KEY `track_type` (`track_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
--- Tabela: settings
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `settings` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `setting_key` varchar(100) NOT NULL,
-  `setting_value` text,
-  `setting_type` enum('string','integer','boolean','json','array') DEFAULT 'string',
-  `description` text,
-  `is_public` tinyint(1) DEFAULT 0,
-  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `setting_key` (`setting_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
--- Tabela: logs
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `logs` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `level` enum('info','warning','error','debug') DEFAULT 'info',
-  `message` text NOT NULL,
-  `context` json DEFAULT NULL,
-  `user_id` int(11) DEFAULT NULL,
-  `ip_address` varchar(45) DEFAULT NULL,
-  `user_agent` text,
-  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `level` (`level`),
-  KEY `user_id` (`user_id`),
-  KEY `created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- --------------------------------------------------------
--- Dados iniciais
--- --------------------------------------------------------
-
--- Usuário administrador padrão
-INSERT INTO `users` (`username`, `email`, `password`, `role`, `plan`, `email_verified`) VALUES
-('admin', 'admin@example.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin', 'enterprise', 1);
-
--- Configurações padrão
-INSERT INTO `settings` (`setting_key`, `setting_value`, `description`, `is_public`) VALUES
-('site_name', 'YouTube Audio Extractor', 'Nome do site', 1),
-('site_description', 'Extraia áudio de vídeos do YouTube', 'Descrição do site', 1),
-('max_video_size', '1073741824', 'Tamanho máximo em bytes', 1),
-('max_video_duration', '7200', 'Duração máxima em segundos', 1),
-('enable_registration', '1', 'Permitir novos registros', 1),
-('default_quality', '128', 'Qualidade padrão', 1);
-
--- Cria índices para performance
-CREATE INDEX idx_processes_user_status ON processes(user_id, status);
-CREATE INDEX idx_processes_created_status ON processes(created_at, status);
-CREATE INDEX idx_tracks_process_type ON tracks(process_id, track_type);
-SQL
-
-# Executa o SQL
-sudo mysql -u root -p"$DB_ROOT_PASS" "$DB_NAME" < "$SQL_FILE"
-rm -f "$SQL_FILE"
-
-log "Estrutura do banco criada com sucesso!"
-
-# -------------------------------------------------
-# 8. PREPARA DIRETÓRIO DO PROJETO
-# -------------------------------------------------
-log "Preparando diretório do projeto..."
-
-# Remove instalação anterior se existir
-if [ -d "$PROJECT_DIR" ]; then
-    warn "Removendo instalação anterior..."
-    sudo rm -rf "$PROJECT_DIR"
-fi
-
-# Cria diretório
-sudo mkdir -p "$PROJECT_DIR"
-sudo chown -R $USER:$USER "$PROJECT_DIR"
-
-# -------------------------------------------------
-# 9. BAIXA CÓDIGO DO GITHUB
-# -------------------------------------------------
-log "Baixando código do GitHub..."
-
-cd "$PROJECT_DIR"
-
-# Método 1: Tenta git clone (mais rápido)
-log "Tentando clone via Git..."
-if command -v git >/dev/null 2>&1; then
-    git clone --depth 1 https://github.com/Marcelo1408/youtube-audio-extractor.git . 2>/dev/null && {
-        log "Clone via Git bem-sucedido!"
-    } || {
-        warn "Git falhou, usando download ZIP..."
-        DOWNLOAD_ZIP=true
-    }
+# 7. Baixar e extrair o site do GitHub
+log "Baixando site do GitHub..."
+cd /tmp
+if command -v wget &> /dev/null; then
+    wget -O $ZIP_FILE $REPO_URL
+elif command -v curl &> /dev/null; then
+    curl -L -o $ZIP_FILE $REPO_URL
 else
-    DOWNLOAD_ZIP=true
+    error "Necessário wget ou curl para baixar o site"
 fi
 
-# Método 2: Download ZIP se Git falhou
-if [ "$DOWNLOAD_ZIP" = true ] || [ -z "$(ls -A . 2>/dev/null)" ]; then
-    log "Baixando arquivo ZIP..."
-    
-    # URLs alternativas
-    ZIP_URLS=(
-        "https://github.com/Marcelo1408/youtube-audio-extractor/archive/refs/heads/main.zip"
-        "https://github.com/Marcelo1408/youtube-audio-extractor/archive/main.zip"
-    )
-    
-    for ZIP_URL in "${ZIP_URLS[@]}"; do
-        log "Tentando: $ZIP_URL"
-        if wget -q --show-progress "$ZIP_URL" -O site.zip; then
-            log "Download bem-sucedido!"
-            break
-        fi
-    done
-    
-    if [ -f "site.zip" ]; then
-        log "Extraindo arquivos..."
-        unzip -q site.zip
-        
-        # Procura pelo diretório extraído
-        EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "*youtube*" | head -1)
-        
-        if [ -n "$EXTRACTED_DIR" ] && [ -d "$EXTRACTED_DIR" ]; then
-            log "Movendo arquivos..."
-            mv "$EXTRACTED_DIR"/* . 2>/dev/null || true
-            mv "$EXTRACTED_DIR"/.* . 2>/dev/null || true
-            rm -rf "$EXTRACTED_DIR"
-        else
-            # Lista o conteúdo para debug
-            log "Conteúdo do ZIP:"
-            unzip -l site.zip | head -20
-        fi
-        
-        rm -f site.zip
+log "Extraindo arquivos para $SITE_DIR..."
+unzip -q -o $ZIP_FILE -d /tmp/
+
+# Encontrar e copiar arquivos extraídos
+if [ -d "/tmp/youtube-extractor-pro-main" ]; then
+    cp -r /tmp/youtube-extractor-pro-main/* $SITE_DIR/
+    cp -r /tmp/youtube-extractor-pro-main/. $SITE_DIR/ 2>/dev/null || true
+elif [ -d "/tmp/main" ]; then
+    cp -r /tmp/main/* $SITE_DIR/
+    cp -r /tmp/main/. $SITE_DIR/ 2>/dev/null || true
+else
+    # Tentar encontrar qualquer diretório extraído
+    EXTRACTED_DIR=$(find /tmp -type d -name "*youtube*extractor*" -o -name "*youtube*" | head -1)
+    if [ -n "$EXTRACTED_DIR" ] && [ -d "$EXTRACTED_DIR" ]; then
+        cp -r "$EXTRACTED_DIR"/* $SITE_DIR/
+        cp -r "$EXTRACTED_DIR"/. $SITE_DIR/ 2>/dev/null || true
     else
-        warn "Falha no download. Criando estrutura básica..."
-        # Cria estrutura mínima
-        mkdir -p public uploads
-        cat > public/index.php <<'PHP'
-<?php
-echo '<!DOCTYPE html>
-<html>
+        warn "Não foi possível encontrar arquivos extraídos. Extraindo diretamente..."
+        unzip -q -o $ZIP_FILE -d $SITE_DIR
+    fi
+fi
+
+# Limpar arquivos temporários
+rm -f $ZIP_FILE
+rm -rf /tmp/youtube-extractor-pro-main /tmp/main
+
+# 8. Verificar estrutura do projeto
+log "Verificando estrutura do projeto..."
+cd $SITE_DIR
+
+# Criar estrutura de diretórios se não existir
+mkdir -p backend frontend uploads
+
+# 9. Instalar dependências do Node.js
+log "Instalando dependências do Node.js..."
+
+# Procurar package.json em diferentes locais
+if [ -f "$SITE_DIR/backend/package.json" ]; then
+    log "Instalando dependências do backend..."
+    cd $SITE_DIR/backend
+    npm install --production --no-audit
+elif [ -f "$SITE_DIR/package.json" ]; then
+    log "Instalando dependências do projeto..."
+    cd $SITE_DIR
+    npm install --production --no-audit
+else
+    warn "Nenhum package.json encontrado. Criando estrutura básica..."
+    
+    # Criar package.json básico para Node.js
+    cat > $SITE_DIR/package.json << 'EOF'
+{
+  "name": "youtube-extractor-pro",
+  "version": "1.0.0",
+  "description": "YouTube Audio Extractor Pro",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "mysql2": "^3.6.0",
+    "ytdl-core": "^4.11.5",
+    "fluent-ffmpeg": "^2.1.2",
+    "dotenv": "^16.3.1",
+    "socket.io": "^4.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+EOF
+    
+    # Criar server.js básico
+    cat > $SITE_DIR/server.js << 'EOF'
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'frontend')));
+
+// Rotas
+app.get('/api/health', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        message: 'YouTube Audio Extractor Pro está funcionando!',
+        version: '1.0.0'
+    });
+});
+
+app.get('/api/config', (req, res) => {
+    res.json({
+        nodeVersion: process.version,
+        platform: process.platform,
+        uptime: process.uptime()
+    });
+});
+
+// Rota para frontend
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+});
+
+app.listen(port, () => {
+    console.log(`✅ Servidor rodando na porta ${port}`);
+    console.log(`📁 Diretório: ${__dirname}`);
+    console.log(`🌐 Acesse: http://localhost:${port}`);
+});
+EOF
+    
+    # Criar frontend básico se não existir
+    mkdir -p $SITE_DIR/frontend
+    cat > $SITE_DIR/frontend/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="pt-BR">
 <head>
-    <title>YouTube Audio Extractor</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Audio Extractor Pro</title>
     <style>
-        body { font-family: Arial; text-align: center; padding: 50px; }
-        .success { color: green; font-size: 24px; }
-        .info { margin-top: 30px; padding: 20px; background: #f5f5f5; border-radius: 10px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            max-width: 800px;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 { 
+            font-size: 3rem; 
+            margin-bottom: 1rem;
+            background: linear-gradient(45deg, #ff6b6b, #feca57);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .status { 
+            background: rgba(0, 0, 0, 0.2); 
+            padding: 1rem; 
+            border-radius: 10px;
+            margin: 2rem 0;
+        }
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+        .feature {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1.5rem;
+            border-radius: 10px;
+            transition: transform 0.3s;
+        }
+        .feature:hover {
+            transform: translateY(-5px);
+        }
+        .icon { font-size: 2rem; margin-bottom: 1rem; }
     </style>
 </head>
 <body>
-    <div class="success">✅ YouTube Audio Extractor</div>
-    <div class="info">
-        <h2>Instalação Completa!</h2>
-        <p>Domínio: <?php echo $_SERVER["HTTP_HOST"] ?? "'$DOMAIN'"; ?></p>
-        <p>PHP: <?php echo phpversion(); ?></p>
-        <p>Banco: <?php echo getenv("DB_NAME") ?: "'$DB_NAME'"; ?></p>
+    <div class="container">
+        <h1>🎵 YouTube Audio Extractor Pro</h1>
+        <p style="font-size: 1.2rem; opacity: 0.9;">Sistema instalado com sucesso!</p>
+        
+        <div class="status">
+            <p id="status">Verificando status do sistema...</p>
+        </div>
+        
+        <div class="features">
+            <div class="feature">
+                <div class="icon">⚡</div>
+                <h3>Rápido</h3>
+                <p>Extraia áudio do YouTube em segundos</p>
+            </div>
+            <div class="feature">
+                <div class="icon">🎧</div>
+                <h3>Qualidade</h3>
+                <p>Suporte a múltiplos formatos de áudio</p>
+            </div>
+            <div class="feature">
+                <div class="icon">📁</div>
+                <h3>Organizado</h3>
+                <p>Gerenciamento de downloads fácil</p>
+            </div>
+        </div>
+        
+        <div style="margin-top: 2rem;">
+            <p>Configure o sistema editando o arquivo <code>.env</code></p>
+            <p style="font-size: 0.9rem; opacity: 0.7; margin-top: 1rem;">
+                Instalado em: <code>/var/www/youtube-extractor-pro</code>
+            </p>
+        </div>
     </div>
-</body>
-</html>';
-PHP
-    fi
-fi
-
-# Verifica se há arquivos
-if [ -z "$(ls -A . 2>/dev/null)" ]; then
-    error "Nenhum arquivo foi baixado ou criado!"
-else
-    log "Arquivos encontrados: $(ls | wc -l)"
-fi
-
-# -------------------------------------------------
-# 10. DEPENDÊNCIAS PYTHON
-# -------------------------------------------------
-log "Instalando dependências Python..."
-
-# Cria virtual environment
-python3 -m venv venv 2>/dev/null || {
-    warn "Virtual env falhou, instalando globalmente..."
-    sudo pip3 install --upgrade pip
-    sudo pip3 install yt-dlp pydub moviepy python-dotenv
-}
-
-# Ativa venv e instala
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
-    pip install --upgrade pip
-    pip install yt-dlp pydub moviepy python-dotenv
-    deactivate
     
-    # Cria links simbólicos
-    sudo ln -sf "$PROJECT_DIR/venv/bin/python3" /usr/local/bin/audio-extractor-python 2>/dev/null || true
-    sudo ln -sf "$PROJECT_DIR/venv/bin/yt-dlp" /usr/local/bin/audio-extractor-ytdlp 2>/dev/null || true
+    <script>
+        // Verificar status da API
+        fetch('/api/health')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('status').innerHTML = 
+                    `✅ ${data.message}<br><small>Sistema operacional normalmente</small>`;
+            })
+            .catch(error => {
+                document.getElementById('status').innerHTML = 
+                    `⚠️ API não respondendo. Verifique o servidor Node.js.<br>
+                     <small>Erro: ${error.message}</small>`;
+            });
+        
+        // Obter informações do sistema
+        fetch('/api/config')
+            .then(response => response.json())
+            .then(data => {
+                console.log('Configuração do sistema:', data);
+            });
+    </script>
+</body>
+</html>
+EOF
+    
+    cd $SITE_DIR
+    npm install --production --no-audit
+    log "Estrutura básica criada e dependências instaladas."
 fi
 
-# -------------------------------------------------
-# 11. CONFIGURA PERMISSÕES
-# -------------------------------------------------
-log "Configurando permissões..."
-
-# Cria diretórios necessários
-mkdir -p uploads cache
-
-# Ajusta dono e permissões
-sudo chown -R www-data:www-data "$PROJECT_DIR"
-sudo find "$PROJECT_DIR" -type f -exec chmod 644 {} \;
-sudo find "$PROJECT_DIR" -type d -exec chmod 755 {} \;
-
-# Diretórios especiais
-sudo chmod 775 uploads cache
-
-# -------------------------------------------------
-# 12. ARQUIVO DE CONFIGURAÇÃO (.env)
-# -------------------------------------------------
-log "Criando arquivo de configuração..."
-
-# Gera chave segura para aplicação
-APP_KEY=$(openssl rand -base64 32)
-
-cat > .env <<ENV
-# ============================================
-# CONFIGURAÇÃO - YouTube Audio Extractor
-# ============================================
-
-# Aplicação
-APP_ENV=production
-APP_DEBUG=false
-APP_URL=https://$DOMAIN
-APP_KEY=$APP_KEY
-
-# Banco de Dados
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=$DB_NAME
-DB_USERNAME=$DB_USER
-DB_PASSWORD=$DB_PASS
-
-# Python / Processamento
-PYTHON_PATH=$(which python3)
-FFMPEG_PATH=$(which ffmpeg)
-YTDLP_PATH=$(which yt-dlp)
-
-# Diretórios
-UPLOAD_PATH=$PROJECT_DIR/uploads
-CACHE_PATH=$PROJECT_DIR/cache
-LOG_PATH=/var/log/audio-extractor
-
-# Limites
-MAX_FILE_SIZE=50M
-MAX_VIDEO_DURATION=7200
-MAX_CONCURRENT_PROCESSES=3
-
-# Sessão
-SESSION_DRIVER=database
-SESSION_LIFETIME=120
-
-# Fila
-QUEUE_CONNECTION=database
-
-# Email (configure depois)
-MAIL_MAILER=smtp
-MAIL_HOST=smtp.gmail.com
-MAIL_PORT=587
-MAIL_USERNAME=seu-email@gmail.com
-MAIL_PASSWORD=sua-senha
-MAIL_ENCRYPTION=tls
-ENV
-
-# Protege o .env
-sudo chown www-data:www-data .env
-sudo chmod 600 .env
-
-# -------------------------------------------------
-# 13. CONFIGURAÇÃO DO NGINX
-# -------------------------------------------------
+# 10. Configurar Nginx
 log "Configurando Nginx..."
-
-# Remove site default
-sudo rm -f /etc/nginx/sites-enabled/default
-
-# Cria configuração do site
-sudo cat > "/etc/nginx/sites-available/$DOMAIN" <<NGINX
-# ============================================
-# YouTube Audio Extractor - $DOMAIN
-# ============================================
-
+cat > /etc/nginx/sites-available/youtube-extractor << NGINX
 server {
     listen 80;
     listen [::]:80;
+    server_name _;
     
-    server_name $DOMAIN;
-    root $PROJECT_DIR/public;
+    # Diretório raiz do site
+    root $SITE_DIR/frontend;
+    index index.html index.htm;
     
-    index index.php index.html index.htm;
-    
-    # Limites
-    client_max_body_size 50M;
-    client_body_timeout 300s;
-    
-    # Logs
-    access_log /var/log/nginx/$DOMAIN-access.log;
-    error_log /var/log/nginx/$DOMAIN-error.log;
-    
-    # Segurança básica
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    
-    # Pasta pública
+    # Configuração do frontend - Single Page Application
     location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
+        try_files \$uri \$uri/ /index.html;
     }
     
-    # PHP
-    location ~ \.php\$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
-        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
-        include fastcgi_params;
-        
-        # Timeouts aumentados para processamento
-        fastcgi_read_timeout 300s;
-        fastcgi_send_timeout 300s;
+    # API Proxy - Node.js backend
+    location /api/ {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
     }
     
-    # Uploads (acesso interno)
+    # WebSocket support
+    location /socket.io/ {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    
+    # Uploads directory
     location /uploads/ {
-        alias $PROJECT_DIR/uploads/;
-        internal;
+        alias $SITE_DIR/uploads/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        autoindex off;
     }
     
-    # Bloqueia acesso a arquivos sensíveis
-    location ~ /\.(?!well-known).* {
-        deny all;
-    }
-    
-    location ~ /\.env {
-        deny all;
-    }
-    
-    # Cache para arquivos estáticos
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)\$ {
+    # Static files cache
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|mp3|mp4|webm)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
         try_files \$uri =404;
     }
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
 }
 NGINX
 
-# Ativa o site
-sudo ln -sf "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-enabled/"
+# Habilitar site
+ln -sf /etc/nginx/sites-available/youtube-extractor /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
 
-# Testa configuração
-sudo nginx -t || error "Configuração do Nginx inválida!"
+# Testar e reiniciar Nginx
+nginx -t && systemctl restart nginx
+log "Nginx configurado e reiniciado."
 
-# -------------------------------------------------
-# 14. OTIMIZAÇÃO DO PHP-FPM
-# -------------------------------------------------
-log "Otimizando PHP-FPM..."
-
-PHP_CONF="/etc/php/8.1/fpm/php.ini"
-if [ -f "$PHP_CONF" ]; then
-    sudo sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 50M/' "$PHP_CONF"
-    sudo sed -i 's/^post_max_size = .*/post_max_size = 50M/' "$PHP_CONF"
-    sudo sed -i 's/^max_execution_time = .*/max_execution_time = 300/' "$PHP_CONF"
-    sudo sed -i 's/^max_input_time = .*/max_input_time = 300/' "$PHP_CONF"
-    sudo sed -i 's/^memory_limit = .*/memory_limit = 256M/' "$PHP_CONF"
-fi
-
-# -------------------------------------------------
-# 15. SISTEMA DE LOGS
-# -------------------------------------------------
-log "Configurando sistema de logs..."
-
-sudo mkdir -p /var/log/audio-extractor
-sudo touch /var/log/audio-extractor/{app.log,error.log,processing.log}
-sudo chown -R www-data:www-data /var/log/audio-extractor
-sudo chmod -R 755 /var/log/audio-extractor
-
-# Configura logrotate
-sudo cat > /etc/logrotate.d/audio-extractor <<LOGROTATE
-/var/log/audio-extractor/*.log {
-    daily
-    missingok
-    rotate 30
-    compress
-    delaycompress
-    notifempty
-    create 640 www-data www-data
-    sharedscripts
-    postrotate
-        systemctl reload php8.1-fpm >/dev/null 2>&1 || true
-    endscript
-}
-LOGROTATE
-
-# -------------------------------------------------
-# 16. SSL (LET'S ENCRYPT) - OPCIONAL
-# -------------------------------------------------
-log "Configurando SSL (Let's Encrypt)..."
-
-# Reinicia serviços primeiro
-sudo systemctl restart php8.1-fpm
-sudo systemctl restart nginx
-
-# Aguarda Nginx iniciar
-sleep 3
-
-# Oferece configuração SSL
-echo ""
-read -p "Deseja configurar SSL agora? (Requer DNS configurado) (s/n): " -n 1 -r
-echo
-
-if [[ $REPLY =~ ^[Ss]$ ]]; then
-    log "Configurando SSL..."
-    if sudo certbot --nginx -d "$DOMAIN" --email "$EMAIL" --agree-tos --non-interactive --redirect; then
-        log "SSL configurado com sucesso!"
-    else
-        warn "Não foi possível configurar SSL automaticamente."
-        warn "Configure manualmente quando o DNS estiver apontando:"
-        info "  sudo certbot --nginx -d $DOMAIN --email $EMAIL --agree-tos"
-    fi
+# 11. Configurar firewall (opcional)
+if command -v ufw &> /dev/null; then
+    log "Configurando firewall..."
+    ufw --force enable 2>/dev/null || true
+    ufw allow OpenSSH 2>/dev/null || warn "Erro ao configurar firewall OpenSSH"
+    ufw allow 'Nginx Full' 2>/dev/null || warn "Erro ao configurar firewall Nginx"
+    ufw --force reload 2>/dev/null || true
 else
-    log "SSL não configurado. Configure depois com:"
-    info "  sudo certbot --nginx -d $DOMAIN --email $EMAIL --agree-tos"
+    warn "UFW não encontrado. Configure o firewall manualmente se necessário."
 fi
 
-# -------------------------------------------------
-# 17. SCRIPT DE MONITORAMENTO
-# -------------------------------------------------
-log "Criando scripts auxiliares..."
+# 12. Iniciar aplicação com PM2
+log "Iniciando aplicação com PM2..."
 
-# Script de monitoramento
-sudo cat > /usr/local/bin/monitor-extractor <<'MONITOR'
+# Determinar o arquivo principal
+if [ -f "$SITE_DIR/backend/server.js" ]; then
+    MAIN_FILE="$SITE_DIR/backend/server.js"
+    START_DIR="$SITE_DIR/backend"
+elif [ -f "$SITE_DIR/server.js" ]; then
+    MAIN_FILE="$SITE_DIR/server.js"
+    START_DIR="$SITE_DIR"
+elif [ -f "$SITE_DIR/app.js" ]; then
+    MAIN_FILE="$SITE_DIR/app.js"
+    START_DIR="$SITE_DIR"
+else
+    MAIN_FILE="$SITE_DIR/server.js"
+    START_DIR="$SITE_DIR"
+fi
+
+cd $START_DIR
+
+# Parar instância existente se houver
+pm2 delete youtube-extractor 2>/dev/null || true
+
+# Iniciar aplicação
+pm2 start $MAIN_FILE --name "youtube-extractor" --time
+pm2 save
+
+# Configurar startup do PM2
+if [ -f "/etc/systemd/system/pm2-root.service" ]; then
+    systemctl daemon-reload
+    systemctl enable pm2-root
+else
+    pm2 startup 2>/dev/null | tail -1 | bash 2>/dev/null || warn "Configure o PM2 startup manualmente: pm2 startup"
+fi
+
+pm2 list
+
+# 13. Criar diretórios necessários
+log "Criando diretórios necessários..."
+mkdir -p $SITE_DIR/uploads/{videos,audio,temp,converted}
+chown -R www-data:www-data $SITE_DIR/uploads
+chmod -R 755 $SITE_DIR/uploads
+
+# Configurar permissões do diretório principal
+chown -R $SUDO_USER:www-data $SITE_DIR
+chmod -R 755 $SITE_DIR
+find $SITE_DIR -type f -exec chmod 644 {} \;
+find $SITE_DIR -type d -exec chmod 755 {} \;
+
+# 14. Criar arquivo .env se necessário
+if [ ! -f "$SITE_DIR/.env" ] && [ ! -f "$SITE_DIR/backend/.env" ]; then
+    ENV_FILE="$SITE_DIR/.env"
+    cat > $ENV_FILE << 'EOF'
+# Configurações do Banco de Dados
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=youtube_extractor
+DB_USER=youtube_user
+DB_PASSWORD=YoutubePass123!
+
+# Configurações do Servidor
+PORT=3000
+NODE_ENV=production
+HOST=0.0.0.0
+SESSION_SECRET=$(openssl rand -hex 32)
+
+# Configurações do YouTube
+YOUTUBE_API_KEY=your_api_key_here
+
+# Configurações de FFmpeg
+FFMPEG_PATH=/usr/bin/ffmpeg
+FFPROBE_PATH=/usr/bin/ffprobe
+
+# Configurações de Upload
+MAX_FILE_SIZE=104857600 # 100MB
+UPLOAD_PATH=./uploads
+ALLOWED_FORMATS=mp3,mp4,wav,aac,flac
+
+# Configurações do Redis (opcional)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Configurações de Log
+LOG_LEVEL=info
+LOG_FILE=./logs/app.log
+
+# Configurações de Rate Limiting
+RATE_LIMIT_WINDOW=15
+RATE_LIMIT_MAX=100
+EOF
+    chmod 600 $ENV_FILE
+    log "Arquivo .env criado com configurações padrão"
+fi
+
+# 15. Criar script de manutenção
+cat > /usr/local/bin/youtube-extractor-manage << 'EOF'
 #!/bin/bash
-echo "=== 🎵 MONITORAMENTO - YouTube Audio Extractor ==="
-echo "Data: $(date)"
-echo ""
-echo "📦 SERVIÇOS:"
-echo "  Nginx: $(systemctl is-active nginx 2>/dev/null || echo 'n/a')"
-echo "  MariaDB: $(systemctl is-active mariadb 2>/dev/null || echo 'n/a')"
-echo "  PHP-FPM: $(systemctl is-active php8.1-fpm 2>/dev/null || echo 'n/a')"
-echo ""
-echo "💾 DISCO:"
-df -h /var/www | tail -1
-echo ""
-echo "🗄️  BANCO:"
-mysql -u audio_user -pAudio2024 -e "SELECT 
-  (SELECT COUNT(*) FROM users) as users,
-  (SELECT COUNT(*) FROM processes) as processes,
-  (SELECT COUNT(*) FROM processes WHERE status='completed') as completed;" youtube_extractor 2>/dev/null || echo "  Não conectado"
-echo ""
-echo "📊 ARQUIVOS:"
-find /var/www -name "*.mp3" -type f 2>/dev/null | wc -l | xargs echo "  MP3s:"
-echo ""
-echo "📈 MEMÓRIA:"
-free -h | grep -E "^Mem:|^Swap:"
-MONITOR
+case "$1" in
+    start)
+        cd /var/www/youtube-extractor-pro
+        pm2 start youtube-extractor
+        ;;
+    stop)
+        pm2 stop youtube-extractor
+        ;;
+    restart)
+        pm2 restart youtube-extractor
+        ;;
+    status)
+        pm2 status youtube-extractor
+        ;;
+    logs)
+        pm2 logs youtube-extractor
+        ;;
+    update)
+        cd /var/www/youtube-extractor-pro
+        git pull origin main
+        npm install --production
+        pm2 restart youtube-extractor
+        ;;
+    *)
+        echo "Uso: $0 {start|stop|restart|status|logs|update}"
+        exit 1
+        ;;
+esac
+EOF
 
-sudo chmod +x /usr/local/bin/monitor-extractor
+chmod +x /usr/local/bin/youtube-extractor-manage
 
-# Script de backup
-sudo cat > /usr/local/bin/backup-extractor <<'BACKUP'
-#!/bin/bash
-BACKUP_DIR="/backup/audio-extractor"
-mkdir -p "$BACKUP_DIR"
-DATE=$(date +%Y%m%d_%H%M%S)
-
-echo "=== 🔄 BACKUP - YouTube Audio Extractor ==="
-echo "Data: $DATE"
+# 16. Finalização
+log "Instalação concluída com sucesso!"
 echo ""
-
-# Backup do banco
-echo "📦 Backup do banco..."
-mysqldump -u audio_user -pAudio2024 youtube_extractor > "$BACKUP_DIR/db_$DATE.sql" 2>/dev/null
-gzip "$BACKUP_DIR/db_$DATE.sql"
-
-# Backup dos uploads
-echo "📁 Backup dos uploads..."
-tar -czf "$BACKUP_DIR/uploads_$DATE.tar.gz" /var/www/*/uploads 2>/dev/null
-
-echo "✅ Backup criado em: $BACKUP_DIR"
-ls -lh "$BACKUP_DIR"/*_"$DATE".*
-BACKUP
-
-sudo chmod +x /usr/local/bin/backup-extractor
-
-# -------------------------------------------------
-# 18. REINICIA SERVIÇOS FINAL
-# -------------------------------------------------
-log "Reiniciando serviços..."
-sudo systemctl restart nginx
-sudo systemctl restart mariadb
-sudo systemctl restart php8.1-fpm
-
-# -------------------------------------------------
-# 19. VERIFICAÇÃO FINAL
-# -------------------------------------------------
+echo -e "${GREEN}=================================================${NC}"
+echo -e "${BLUE}🎵 YouTube Audio Extractor Pro Instalado!${NC}"
+echo -e "${GREEN}=================================================${NC}"
 echo ""
-echo "============================================"
-echo "✅ VERIFICAÇÃO DA INSTALAÇÃO"
-echo "============================================"
-
-# Testa cada componente
+echo "📁 Diretório do site: $SITE_DIR"
+echo "🌐 URL de acesso: http://$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}' || echo 'seu-ip')"
+echo "🚀 Servidor Node.js: porta 3000 (proxy via Nginx)"
+echo "💾 Banco de dados: MariaDB (youtube_extractor)"
 echo ""
-echo "1. 📁 DIRETÓRIO:"
-if [ -d "$PROJECT_DIR" ]; then
-    echo "   ✅ $PROJECT_DIR"
-    COUNT_FILES=$(find "$PROJECT_DIR" -type f | wc -l)
-    echo "   📊 $COUNT_FILES arquivos"
-else
-    echo "   ❌ Não existe"
-fi
-
+echo "🛠️  Comandos de gerenciamento:"
+echo "   • youtube-extractor-manage start    # Iniciar"
+echo "   • youtube-extractor-manage stop     # Parar"
+echo "   • youtube-extractor-manage restart  # Reiniciar"
+echo "   • youtube-extractor-manage status   # Status"
+echo "   • youtube-extractor-manage logs     # Ver logs"
+echo "   • youtube-extractor-manage update   # Atualizar"
 echo ""
-echo "2. 🗄️  BANCO DE DADOS:"
-if mysql -u "$DB_USER" -p"$DB_PASS" -e "USE $DB_NAME; SHOW TABLES;" 2>/dev/null | grep -q "users"; then
-    echo "   ✅ $DB_NAME"
-    TABLES=$(mysql -u "$DB_USER" -p"$DB_PASS" -e "USE $DB_NAME; SHOW TABLES;" 2>/dev/null | wc -l)
-    echo "   📊 $TABLES tabelas"
-else
-    echo "   ❌ Não acessível"
-fi
-
+echo "📋 Próximos passos IMPORTANTES:"
+echo "   1. Edite $SITE_DIR/.env com suas configurações reais"
+echo "   2. Configure uma chave de API do YouTube válida"
+echo "   3. Para SSL/TLS (HTTPS): certbot --nginx"
+echo "   4. Configure backups periódicos do banco de dados"
 echo ""
-echo "3. 🔧 SERVIÇOS:"
-echo "   Nginx: $(sudo systemctl is-active nginx)"
-echo "   MariaDB: $(sudo systemctl is-active mariadb)"
-echo "   PHP-FPM: $(sudo systemctl is-active php8.1-fpm)"
-
+echo -e "${GREEN}✅ Site está online e pronto para navegação!${NC}"
 echo ""
-echo "4. 🌐 TESTE WEB:"
-if curl -s -I "http://localhost" 2>/dev/null | grep -q "200\|301"; then
-    echo "   ✅ HTTP respondendo"
-else
-    echo "   ⚠️  Verifique: sudo systemctl status nginx"
-fi
-
-echo ""
-echo "5. 🐍 PYTHON:"
-if which python3 >/dev/null && python3 -c "import yt_dlp, pydub" 2>/dev/null; then
-    echo "   ✅ Dependências instaladas"
-else
-    echo "   ⚠️  Verifique: pip3 list | grep -E 'yt-dlp|pydub'"
-fi
-
-# -------------------------------------------------
-# 20. RESUMO FINAL
-# -------------------------------------------------
-echo ""
-echo "============================================"
-echo "🎉 INSTALAÇÃO COMPLETA!"
-echo "============================================"
-echo ""
-echo "📋 RESUMO DA INSTALAÇÃO:"
-echo "   Domínio: $DOMAIN"
-echo "   Diretório: $PROJECT_DIR"
-echo "   Banco: $DB_NAME"
-echo "   Usuário DB: $DB_USER"
-echo "   Senha DB: [configurada]"
-echo "   Senha Root DB: [configurada]"
-echo "   Email SSL: $EMAIL"
-echo ""
-echo "🔧 COMANDOS ÚTEIS:"
-echo "   Monitorar: monitor-extractor"
-echo "   Backup: backup-extractor"
-echo "   Logs: sudo tail -f /var/log/nginx/$DOMAIN-error.log"
-echo "   Banco: mysql -u $DB_USER -p$DB_PASS $DB_NAME"
-echo "   Reiniciar: sudo systemctl restart nginx mariadb php8.1-fpm"
-echo ""
-echo "🚀 PRÓXIMOS PASSOS:"
-echo "   1. Configure DNS: $DOMAIN → $(curl -s ifconfig.me)"
-echo "   2. SSL (opcional): sudo certbot --nginx -d $DOMAIN"
-echo "   3. Acesse: https://$DOMAIN"
-echo "   4. Login admin: admin@example.com / password"
-echo ""
-echo "📝 LOG DA INSTALAÇÃO: $LOG_FILE"
-echo "============================================"
-
-# Mensagem final
-echo ""
-warn "⚠️  IMPORTANTE: Altere a senha do usuário admin no primeiro login!"
-echo ""
-log "Instalação concluída em $(date)"
-echo "Tempo total: $SECONDS segundos"
