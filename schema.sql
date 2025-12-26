@@ -1,19 +1,19 @@
--- backend/database/schema.sql
--- Schema do YouTube Audio Extractor Pro
+-- schema.sql - Compatível com MariaDB/MySQL
+-- YouTube Audio Extractor Pro Database Schema
 
--- Criar banco de dados (será substituído pelo nome escolhido)
-CREATE DATABASE IF NOT EXISTS `youtube_audio_extractor` 
-CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
+-- Criar banco de dados (compatível com MariaDB)
+CREATE DATABASE IF NOT EXISTS youtube_audio_extractor 
+CHARACTER SET = utf8mb4 
+COLLATE = utf8mb4_unicode_ci;
 
-USE `youtube_audio_extractor`;
+USE youtube_audio_extractor;
 
 -- Desabilitar foreign keys temporariamente
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- Tabela de usuários
 CREATE TABLE IF NOT EXISTS users (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     google_id VARCHAR(255) UNIQUE,
     email VARCHAR(255) UNIQUE NOT NULL,
     username VARCHAR(100) NOT NULL,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Tabela de vídeos processados
 CREATE TABLE IF NOT EXISTS videos (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     video_id VARCHAR(100) NOT NULL,
     title VARCHAR(500) NOT NULL,
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS videos (
 
 -- Tabela de faixas de áudio separadas
 CREATE TABLE IF NOT EXISTS audio_tracks (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     video_id INT NOT NULL,
     name VARCHAR(255) NOT NULL,
     file_path TEXT NOT NULL,
@@ -86,10 +86,10 @@ CREATE TABLE IF NOT EXISTS audio_tracks (
 
 -- Tabela de logs de atividades
 CREATE TABLE IF NOT EXISTS activity_logs (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     activity_type VARCHAR(100) NOT NULL,
-    details JSON,
+    details TEXT,
     ip_address VARCHAR(45),
     user_agent TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -99,9 +99,9 @@ CREATE TABLE IF NOT EXISTS activity_logs (
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Tabela de configurações do sistema
+-- Tabela de configurações do sistema (usando TEXT em vez de JSON para compatibilidade)
 CREATE TABLE IF NOT EXISTS system_settings (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     setting_key VARCHAR(100) UNIQUE NOT NULL,
     setting_value TEXT NOT NULL,
     setting_type ENUM('string', 'number', 'boolean', 'json') DEFAULT 'string',
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS system_settings (
     INDEX idx_is_public (is_public)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Tabela de sessões (para session store)
+-- Tabela de sessões
 CREATE TABLE IF NOT EXISTS sessions (
     session_id VARCHAR(128) PRIMARY KEY,
     expires TIMESTAMP NOT NULL,
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS cache (
 
 -- Tabela de fila de processamento
 CREATE TABLE IF NOT EXISTS processing_queue (
-    id INT PRIMARY KEY AUTO_INCREMENT,
+    id INT AUTO_INCREMENT PRIMARY KEY,
     video_id INT NOT NULL,
     priority INT DEFAULT 1,
     status ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'pending',
@@ -151,28 +151,24 @@ CREATE TABLE IF NOT EXISTS processing_queue (
 
 -- Inserir configurações padrão
 INSERT IGNORE INTO system_settings (setting_key, setting_value, setting_type, description, is_public) VALUES
-('daily_limit_free', '5', 'number', 'Limite diário de processamentos para usuários free', true),
-('daily_limit_premium', '50', 'number', 'Limite diário de processamentos para usuários premium', true),
-('max_duration_free', '1800', 'number', 'Duração máxima em segundos para vídeos free (30 minutos)', true),
-('max_duration_premium', '7200', 'number', 'Duração máxima em segundos para vídeos premium (2 horas)', true),
-('site_name', 'YouTube Audio Extractor Pro', 'string', 'Nome do site', true),
-('site_url', 'http://localhost:3000', 'string', 'URL do site', true),
-('contact_email', 'suporte@youraudioextractor.com', 'string', 'Email de contato', true),
-('allowed_formats', 'mp3,wav,flac,m4a,ogg', 'string', 'Formatos de áudio permitidos', true),
-('max_file_size', '104857600', 'number', 'Tamanho máximo de arquivo em bytes (100MB)', true),
-('maintenance_mode', 'false', 'boolean', 'Modo de manutenção do sistema', true),
-('registration_enabled', 'true', 'boolean', 'Permitir novos cadastros', true),
-('google_auth_enabled', 'true', 'boolean', 'Permitir login com Google', true),
-('default_audio_quality', '128', 'number', 'Qualidade padrão do áudio (kbps)', false),
-('enable_audio_separation', 'true', 'boolean', 'Habilitar separação de áudio', false),
-('max_separation_tracks', '5', 'number', 'Máximo de faixas para separação', false),
-('keep_videos_days', '7', 'number', 'Dias para manter vídeos processados', false),
-('temp_files_lifetime', '24', 'number', 'Horas para manter arquivos temporários', false);
+('daily_limit_free', '5', 'number', 'Limite diário de processamentos para usuários free', TRUE),
+('daily_limit_premium', '50', 'number', 'Limite diário de processamentos para usuários premium', TRUE),
+('max_duration_free', '1800', 'number', 'Duração máxima em segundos para vídeos free (30 minutos)', TRUE),
+('max_duration_premium', '7200', 'number', 'Duração máxima em segundos para vídeos premium (2 horas)', TRUE),
+('site_name', 'YouTube Audio Extractor Pro', 'string', 'Nome do site', TRUE),
+('site_url', 'http://localhost:3000', 'string', 'URL do site', TRUE),
+('contact_email', 'suporte@youraudioextractor.com', 'string', 'Email de contato', TRUE),
+('allowed_formats', 'mp3,wav,flac,m4a,ogg', 'string', 'Formatos de áudio permitidos', TRUE),
+('max_file_size', '104857600', 'number', 'Tamanho máximo de arquivo em bytes (100MB)', TRUE),
+('maintenance_mode', 'false', 'boolean', 'Modo de manutenção do sistema', TRUE),
+('registration_enabled', 'true', 'boolean', 'Permitir novos cadastros', TRUE),
+('google_auth_enabled', 'true', 'boolean', 'Permitir login com Google', TRUE);
 
 -- Criar usuário admin padrão (senha: Admin123!)
--- Nota: A senha hash deve ser gerada pelo sistema
+-- Nota: A senha hash deve ser gerada pela aplicação
+-- Senha 'Admin123!' hash com bcrypt: \$2a\$10\$N9qo8uLOickgx2ZMRZoMye.CHx6p5p7Z1F6lB6JtHcQeJ7kTQQF7K
 INSERT IGNORE INTO users (email, username, password_hash, role, email_verified) 
-VALUES ('admin@example.com', 'Administrador', '$2a$10$YourHashedPasswordHere', 'admin', TRUE);
+VALUES ('admin@example.com', 'Administrador', '\$2a\$10\$N9qo8uLOickgx2ZMRZoMye.CHx6p5p7Z1F6lB6JtHcQeJ7kTQQF7K', 'admin', TRUE);
 
 -- Criar índices adicionais para performance
 CREATE INDEX IF NOT EXISTS idx_videos_completed ON videos(status, completed_at);
@@ -185,8 +181,13 @@ CREATE INDEX IF NOT EXISTS idx_processing_queue_status ON processing_queue(statu
 -- Habilitar foreign keys novamente
 SET FOREIGN_KEY_CHECKS = 1;
 
--- Procedimento para limpeza de dados antigos
-DELIMITER //
+-- Comentário sobre eventos (MariaDB pode ter eventos desabilitados por padrão)
+-- Para habilitar eventos, execute: SET GLOBAL event_scheduler = ON;
+-- E adicione ao my.cnf: event_scheduler=ON
+
+/*
+-- Procedimento para limpeza de dados antigos (opcional)
+DELIMITER $$
 CREATE PROCEDURE IF NOT EXISTS cleanup_old_data()
 BEGIN
     -- Limpar vídeos com mais de 30 dias
@@ -205,40 +206,23 @@ BEGIN
     -- Limpar sessões expiradas
     DELETE FROM sessions 
     WHERE expires < NOW();
-END//
+END$$
 DELIMITER ;
 
--- Evento para limpeza automática diária
+-- Evento para limpeza automática diária (opcional)
 CREATE EVENT IF NOT EXISTS daily_cleanup
 ON SCHEDULE EVERY 1 DAY
 STARTS CURRENT_TIMESTAMP
 DO
     CALL cleanup_old_data();
+*/
 
--- Ativar eventos
-SET GLOBAL event_scheduler = ON;
-
--- Trigger para atualizar updated_at
-DELIMITER //
+-- Trigger para atualizar updated_at (opcional)
+DELIMITER $$
 CREATE TRIGGER IF NOT EXISTS update_videos_timestamp
 BEFORE UPDATE ON videos
 FOR EACH ROW
 BEGIN
     SET NEW.updated_at = CURRENT_TIMESTAMP;
-END//
+END$$
 DELIMITER ;
-
--- View para estatísticas
-CREATE OR REPLACE VIEW user_stats AS
-SELECT 
-    u.id,
-    u.email,
-    u.username,
-    u.role,
-    COUNT(v.id) as total_videos,
-    SUM(CASE WHEN v.status = 'completed' THEN 1 ELSE 0 END) as completed_videos,
-    SUM(CASE WHEN v.status = 'failed' THEN 1 ELSE 0 END) as failed_videos,
-    COALESCE(SUM(v.file_size), 0) as total_storage_used
-FROM users u
-LEFT JOIN videos v ON u.id = v.user_id
-GROUP BY u.id, u.email, u.username, u.role;
