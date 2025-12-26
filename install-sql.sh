@@ -1,107 +1,115 @@
 #!/bin/bash
-# install-sql.sh - Script simplificado para MariaDB Ubuntu 22.04
+# install-sql.sh - Database setup YouTube Audio Extractor
+# Compatível com schema.sql fornecido
 
 set -e
 
-echo "🔧 YouTube Audio Extractor - Database Setup"
+echo "=========================================="
+echo "🗄️  CONFIGURAÇÃO DO BANCO DE DADOS"
 echo "=========================================="
 
-# Verificar MariaDB
-if ! command -v mysql &> /dev/null; then
-    echo "❌ MariaDB não está instalado."
-    echo "Instalando MariaDB..."
-    sudo apt update
-    sudo apt install -y mariadb-server
-    sudo systemctl start mariadb
-    sudo systemctl enable mariadb
-fi
-
-# Baixar schema corrigido
-echo "📥 Baixando schema.sql..."
-SCHEMA_URL="https://raw.githubusercontent.com/Marcelo1408/youtube-audio-extractor/main/schema.sql"
-curl -sSL "$SCHEMA_URL" -o /tmp/schema.sql
-
-if [ ! -s /tmp/schema.sql ]; then
-    echo "❌ Erro ao baixar schema.sql"
-    exit 1
-fi
-
-echo "✅ Schema baixado com sucesso"
-
-# Configurações
+# ===============================
+# CONFIGURAÇÕES
+# ===============================
 DB_NAME="youtube_audio_extractor"
 DB_USER="youtube_user"
 DB_PASS="YoutubePass123!"
+DB_HOST="localhost"
+DB_PORT="3306"
 
-echo ""
-echo "⚙️  Configurações:"
-echo "   Banco: $DB_NAME"
-echo "   Usuário: $DB_USER"
-echo "   Senha: $DB_PASS"
-echo ""
+read -p "📂 Informe o diretório do site (ex: /var/www/seusite.com): " PROJECT_DIR
 
-# Executar com sudo (método Ubuntu 22.04)
-echo "📊 Criando banco de dados..."
-sudo mysql << EOF
--- Criar banco
-CREATE DATABASE IF NOT EXISTS $DB_NAME 
-CHARACTER SET utf8mb4 
-COLLATE utf8mb4_unicode_ci;
+if [ ! -d "$PROJECT_DIR" ]; then
+  echo "❌ Diretório do site não encontrado"
+  exit 1
+fi
 
--- Usar banco
-USE $DB_NAME;
+ENV_FILE="$PROJECT_DIR/.env"
+SQL_DIR="$PROJECT_DIR/sql"
+SCHEMA_FILE="$SQL_DIR/schema.sql"
 
--- Executar schema
-SOURCE /tmp/schema.sql;
+# ===============================
+# 1. Instalar MariaDB
+# ===============================
+if ! command -v mysql &> /dev/null; then
+  echo "📦 Instalando MariaDB..."
+  apt update -y
+  apt install -y mariadb-server
+  systemctl enable mariadb
+  systemctl start mariadb
+fi
 
--- Criar usuário
+# ===============================
+# 2. Preparar diretório SQL
+# ===============================
+echo "📁 Preparando diretório sql..."
+mkdir -p "$SQL_DIR"
+
+if [ ! -f "$SCHEMA_FILE" ]; then
+  echo "📥 Copiando schema.sql para o projeto..."
+  curl -fsSL https://raw.githubusercontent.com/Marcelo1408/youtube-audio-extractor/main/schema.sql \
+    -o "$SCHEMA_FILE"
+fi
+
+# ===============================
+# 3. Criar banco e usuário
+# ===============================
+echo "📊 Criando banco e usuário..."
+
+mysql <<EOF
+CREATE DATABASE IF NOT EXISTS $DB_NAME
+DEFAULT CHARACTER SET utf8mb4
+DEFAULT COLLATE utf8mb4_unicode_ci;
+
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
-
--- Conceder permissões
 GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';
-
--- Atualizar privilégios
 FLUSH PRIVILEGES;
 
--- Mostrar tabelas criadas
-SHOW TABLES;
+USE $DB_NAME;
+SOURCE $SCHEMA_FILE;
 EOF
 
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "✅ Banco de dados criado com sucesso!"
-    
-    # Criar .env
-    cat > .env << EOF
-# Database
-DB_HOST=localhost
-DB_PORT=3306
+# ===============================
+# 4. Atualizar .env (SEM SOBRESCREVER)
+# ===============================
+echo "⚙️  Configurando .env..."
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "📄 Criando .env..."
+  cat > "$ENV_FILE" <<EOF
+DB_HOST=$DB_HOST
+DB_PORT=$DB_PORT
 DB_NAME=$DB_NAME
 DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASS
 
-# Server
 PORT=3000
 NODE_ENV=production
-SESSION_SECRET=$(openssl rand -base64 32)
-JWT_SECRET=$(openssl rand -base64 32)
-
-# YouTube
-YOUTUBE_API_KEY=SUA_CHAVE_API_AQUI
-
-# Paths
-FFMPEG_PATH=/usr/bin/ffmpeg
-UPLOAD_DIR=./uploads
 EOF
-    
-    echo "📄 Arquivo .env criado"
-    echo ""
-    echo "🎉 Pronto! Configure a YOUTUBE_API_KEY no arquivo .env"
-    
 else
-    echo "❌ Erro ao criar banco de dados"
-    exit 1
+  echo "ℹ️  .env já existe — ajuste manual se necessário:"
+  echo "DB_HOST=$DB_HOST"
+  echo "DB_PORT=$DB_PORT"
+  echo "DB_NAME=$DB_NAME"
+  echo "DB_USER=$DB_USER"
+  echo "DB_PASSWORD=$DB_PASS"
 fi
 
-# Limpar
-rm -f /tmp/schema.sql
+# ===============================
+# FINAL
+# ===============================
+echo ""
+echo "=========================================="
+echo "✅ BANCO CONFIGURADO COM SUCESSO!"
+echo "=========================================="
+echo "🌐 Banco: $DB_NAME"
+echo "👤 Usuário DB: $DB_USER"
+echo "🔑 Senha DB: $DB_PASS"
+echo ""
+echo "👑 ADMIN PADRÃO DO SISTEMA:"
+echo "Email: admin@example.com"
+echo "Senha: admin123"
+echo ""
+echo "📂 Projeto: $PROJECT_DIR"
+echo "📁 SQL: $SQL_DIR/schema.sql"
+echo "=========================================="
