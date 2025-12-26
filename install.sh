@@ -76,11 +76,20 @@ cd /tmp
 # 6. Baixar e extrair site (ZIP)
 # ===============================
 echo "📥 Baixando source do GitHub..."
-wget -O site.zip "$ZIP_URL"
+cd /tmp
+wget -O site.zip https://github.com/Marcelo1408/youtube-audio-extractor/archive/refs/heads/main.zip
 
-echo "📦 Extraindo arquivos..."
+echo "📦 Extraindo pacote principal..."
 unzip -o site.zip
-cp -R youtube-audio-extractor-main/* "$WEB_DIR"
+
+echo "📦 Extraindo site real..."
+cd youtube-audio-extractor-main
+unzip -o youtube-audio-extractor.zip
+
+echo "📁 Copiando arquivos do site..."
+mkdir -p "$WEB_DIR"
+cp -R youtube-audio-extractor/* "$WEB_DIR"
+
 
 # ===============================
 # 7. Instalar dependências Node
