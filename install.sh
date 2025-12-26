@@ -6,19 +6,21 @@ set -e
 
 clear
 echo "=============================================="
-echo "🚀 INSTALADOR YOUTUBE AUDIO EXTRACTOR"
+echo " INSTALADOR YOUTUBE AUDIO EXTRACTOR"
 echo "=============================================="
 echo ""
 
-# Verificar root
+# ------------------------------------------------
+# Verificar se é root
+# ------------------------------------------------
 if [ "$EUID" -ne 0 ]; then
   echo "❌ Execute este script como root"
   exit 1
 fi
 
-# ===============================
-# 1. Perguntas iniciais
-# ===============================
+# ------------------------------------------------
+# Perguntas iniciais
+# ------------------------------------------------
 read -p "🌐 Digite o domínio (ex: extractor.seudominio.com): " DOMAIN
 read -p "📧 Digite o e-mail para SSL (Let's Encrypt): " EMAIL
 
@@ -28,22 +30,23 @@ if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
 fi
 
 WEB_DIR="/var/www/$DOMAIN"
-ZIP_URL="https://github.com/Marcelo1408/youtube-audio-extractor/archive/refs/heads/main.zip"
+TMP_DIR="/tmp/youtube-audio-extractor"
 
-# ===============================
-# 2. Atualização do sistema
-# ===============================
+# ------------------------------------------------
+# Atualização do sistema
+# ------------------------------------------------
 echo "📦 Atualizando sistema..."
 apt update -y
 apt upgrade -y
 
-# ===============================
-# 3. Instalar dependências
-# ===============================
+# ------------------------------------------------
+# Instalar dependências
+# ------------------------------------------------
 echo "📦 Instalando dependências..."
 apt install -y \
   curl \
   unzip \
+  wget \
   git \
   nginx \
   ffmpeg \
@@ -52,62 +55,65 @@ apt install -y \
   ca-certificates \
   build-essential
 
-# ===============================
-# 4. Instalar Node.js 18 LTS
-# ===============================
-echo "🟢 Instalando Node.js 18..."
+# ------------------------------------------------
+# Instalar Node.js 18 LTS
+# ------------------------------------------------
+echo "🟢 Instalando Node.js 18 LTS..."
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
 apt install -y nodejs
 
-# Verificação
-if ! command -v npm &>/dev/null; then
+if ! command -v npm >/dev/null 2>&1; then
   echo "❌ npm não foi instalado corretamente"
   exit 1
 fi
 
-# ===============================
-# 5. Criar diretório do site
-# ===============================
-echo "📁 Criando diretório do site..."
+# ------------------------------------------------
+# Preparar diretórios
+# ------------------------------------------------
+echo "📁 Preparando diretórios..."
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
 mkdir -p "$WEB_DIR"
 cd /tmp
 
-# ===============================
-# 6. Baixar e extrair site (ZIP)
-# ===============================
-echo "📥 Baixando source do GitHub..."
-cd /tmp
+# ------------------------------------------------
+# Baixar e extrair projeto
+# ------------------------------------------------
+echo "📥 Baixando projeto do GitHub..."
 wget -O site.zip https://github.com/Marcelo1408/youtube-audio-extractor/archive/refs/heads/main.zip
 
 echo "📦 Extraindo pacote principal..."
-unzip -o site.zip
+unzip -o site.zip -d "$TMP_DIR"
+
+PROJECT_DIR="$TMP_DIR/youtube-audio-extractor-main"
 
 echo "📦 Extraindo site real..."
-cd youtube-audio-extractor-main
+cd "$PROJECT_DIR"
 unzip -o youtube-audio-extractor.zip
 
-echo "📁 Copiando arquivos do site..."
-mkdir -p "$WEB_DIR"
-cp -R youtube-audio-extractor/* "$WEB_DIR"
+# ------------------------------------------------
+# Copiar arquivos do site (frontend + backend)
+# ------------------------------------------------
+echo "📁 Copiando arquivos do site para $WEB_DIR ..."
+cp -R backend css js utils *.html *.txt .env package.json "$WEB_DIR"
 
-
-# ===============================
-# 7. Instalar dependências Node
-# ===============================
-echo "📦 Instalando dependências do Node..."
+# ------------------------------------------------
+# Instalar dependências do Node.js
+# ------------------------------------------------
+echo "📦 Instalando dependências Node.js..."
 cd "$WEB_DIR"
 npm install --production
 
-# ===============================
-# 8. Permissões
-# ===============================
+# ------------------------------------------------
+# Permissões
+# ------------------------------------------------
 echo "🔐 Ajustando permissões..."
 chown -R www-data:www-data "$WEB_DIR"
 chmod -R 755 "$WEB_DIR"
 
-# ===============================
-# 9. Configurar NGINX
-# ===============================
+# ------------------------------------------------
+# Configurar Nginx
+# ------------------------------------------------
 echo "🌐 Configurando Nginx..."
 
 cat > /etc/nginx/sites-available/$DOMAIN <<EOF
@@ -116,7 +122,7 @@ server {
     server_name $DOMAIN;
 
     root $WEB_DIR;
-    index index.html index.js;
+    index index.html;
 
     location / {
         try_files \$uri \$uri/ /index.html;
@@ -126,32 +132,33 @@ server {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
     }
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/$DOMAIN
+
 nginx -t
 systemctl reload nginx
 
-# ===============================
-# 10. Ativar SSL
-# ===============================
-echo "🔒 Instalando SSL (Let's Encrypt)..."
+# ------------------------------------------------
+# SSL com Let's Encrypt
+# ------------------------------------------------
+echo "🔒 Instalando SSL..."
 certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL"
 
-# ===============================
-# FINAL
-# ===============================
+# ------------------------------------------------
+# Finalização
+# ------------------------------------------------
 clear
 echo "=============================================="
-echo "🎉 SITE INSTALADO COM SUCESSO!"
+echo " SITE INSTALADO COM SUCESSO"
 echo "=============================================="
 echo ""
-echo "🌐 URL DO SITE:"
+echo "🌐 URL:"
 echo "https://$DOMAIN"
 echo ""
 echo "📂 Diretório:"
@@ -160,9 +167,9 @@ echo ""
 echo "🟢 Node.js: $(node -v)"
 echo "📦 npm: $(npm -v)"
 echo ""
-echo "🔑 ADMIN:"
-echo "➡️ Configure o usuário admin no arquivo de configuração do sistema"
-echo "   (caso o projeto possua painel administrativo)"
+echo "⚠️ IMPORTANTE:"
+echo "- Execute o backend com PM2 ou systemd"
+echo "- Banco de dados deve ser instalado ANTES (install-sql.sh)"
 echo ""
-echo "✅ SSL ativo e Nginx configurado"
+echo "✅ Nginx e SSL configurados com sucesso"
 echo "=============================================="
