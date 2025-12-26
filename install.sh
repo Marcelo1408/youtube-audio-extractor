@@ -1,97 +1,159 @@
 #!/bin/bash
-# YouTube Audio Extractor - Instalador Estável
+# YouTube Audio Extractor - Instalador Completo
 # Ubuntu 20.04 / 22.04
-# Node.js 18 LTS
 
 set -e
 
-echo "========================================="
-echo "🚀 Instalador YouTube Audio Extractor"
-echo "========================================="
+clear
+echo "=============================================="
+echo "🚀 INSTALADOR YOUTUBE AUDIO EXTRACTOR"
+echo "=============================================="
+echo ""
 
-# Garantir execução como root
+# Verificar root
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Execute como root"
+  echo "❌ Execute este script como root"
   exit 1
 fi
 
-# Diretório do projeto
-PROJECT_DIR="/opt/youtube-audio-extractor"
+# ===============================
+# 1. Perguntas iniciais
+# ===============================
+read -p "🌐 Digite o domínio (ex: extractor.seudominio.com): " DOMAIN
+read -p "📧 Digite o e-mail para SSL (Let's Encrypt): " EMAIL
+
+if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
+  echo "❌ Domínio e e-mail são obrigatórios"
+  exit 1
+fi
+
+WEB_DIR="/var/www/$DOMAIN"
+ZIP_URL="https://github.com/Marcelo1408/youtube-audio-extractor/archive/refs/heads/main.zip"
 
 # ===============================
-# 1. Limpeza básica (segura)
+# 2. Atualização do sistema
 # ===============================
-echo "🧹 Limpando instalações antigas..."
-apt remove --purge -y nodejs npm || true
-apt autoremove -y
-rm -rf /usr/local/lib/node_modules
-rm -rf ~/.npm
+echo "📦 Atualizando sistema..."
+apt update -y
+apt upgrade -y
 
 # ===============================
-# 2. Dependências básicas
+# 3. Instalar dependências
 # ===============================
 echo "📦 Instalando dependências..."
-apt update -y
-apt install -y curl git ca-certificates build-essential
+apt install -y \
+  curl \
+  unzip \
+  git \
+  nginx \
+  ffmpeg \
+  certbot \
+  python3-certbot-nginx \
+  ca-certificates \
+  build-essential
 
 # ===============================
-# 3. Instalar Node.js 18 LTS (FORMA CORRETA)
+# 4. Instalar Node.js 18 LTS
 # ===============================
-echo "🟢 Instalando Node.js 18 LTS..."
-
+echo "🟢 Instalando Node.js 18..."
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
 apt install -y nodejs
 
-# ===============================
-# 4. Verificação REAL
-# ===============================
-echo "🔍 Verificando Node e npm..."
-
-NODE_PATH=$(which node || true)
-NPM_PATH=$(which npm || true)
-
-if [ -z "$NODE_PATH" ] || [ -z "$NPM_PATH" ]; then
-  echo "❌ Node.js ou npm não foram instalados corretamente"
+# Verificação
+if ! command -v npm &>/dev/null; then
+  echo "❌ npm não foi instalado corretamente"
   exit 1
 fi
 
-echo "✅ Node: $NODE_PATH ($(node -v))"
-echo "✅ npm: $NPM_PATH ($(npm -v))"
+# ===============================
+# 5. Criar diretório do site
+# ===============================
+echo "📁 Criando diretório do site..."
+mkdir -p "$WEB_DIR"
+cd /tmp
 
 # ===============================
-# 5. Clonar ou atualizar projeto
+# 6. Baixar e extrair site (ZIP)
 # ===============================
-echo "📁 Instalando projeto..."
+echo "📥 Baixando source do GitHub..."
+wget -O site.zip "$ZIP_URL"
 
-if [ ! -d "$PROJECT_DIR/.git" ]; then
-  git clone https://github.com/Marcelo1408/youtube-audio-extractor.git "$PROJECT_DIR"
-else
-  cd "$PROJECT_DIR"
-  git pull origin main
-fi
-
-cd "$PROJECT_DIR"
+echo "📦 Extraindo arquivos..."
+unzip -o site.zip
+cp -R youtube-audio-extractor-main/* "$WEB_DIR"
 
 # ===============================
-# 6. Instalar dependências do projeto
+# 7. Instalar dependências Node
 # ===============================
-echo "📦 Instalando dependências npm..."
+echo "📦 Instalando dependências do Node..."
+cd "$WEB_DIR"
 npm install --production
 
 # ===============================
-# 7. Permissões
+# 8. Permissões
 # ===============================
 echo "🔐 Ajustando permissões..."
-chown -R root:root "$PROJECT_DIR"
-chmod -R 755 "$PROJECT_DIR"
+chown -R www-data:www-data "$WEB_DIR"
+chmod -R 755 "$WEB_DIR"
+
+# ===============================
+# 9. Configurar NGINX
+# ===============================
+echo "🌐 Configurando Nginx..."
+
+cat > /etc/nginx/sites-available/$DOMAIN <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    root $WEB_DIR;
+    index index.html index.js;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
+nginx -t
+systemctl reload nginx
+
+# ===============================
+# 10. Ativar SSL
+# ===============================
+echo "🔒 Instalando SSL (Let's Encrypt)..."
+certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL"
 
 # ===============================
 # FINAL
 # ===============================
+clear
+echo "=============================================="
+echo "🎉 SITE INSTALADO COM SUCESSO!"
+echo "=============================================="
 echo ""
-echo "========================================="
-echo "🎉 INSTALAÇÃO CONCLUÍDA COM SUCESSO"
-echo "========================================="
-echo "📂 Projeto: $PROJECT_DIR"
-echo "🟢 Node: $(node -v)"
+echo "🌐 URL DO SITE:"
+echo "https://$DOMAIN"
+echo ""
+echo "📂 Diretório:"
+echo "$WEB_DIR"
+echo ""
+echo "🟢 Node.js: $(node -v)"
 echo "📦 npm: $(npm -v)"
+echo ""
+echo "🔑 ADMIN:"
+echo "➡️ Configure o usuário admin no arquivo de configuração do sistema"
+echo "   (caso o projeto possua painel administrativo)"
+echo ""
+echo "✅ SSL ativo e Nginx configurado"
+echo "=============================================="
