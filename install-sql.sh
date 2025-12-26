@@ -13,7 +13,7 @@ echo "=========================================="
 # ===============================
 DB_NAME="youtube_audio_extractor"
 DB_USER="youtube_audio_extractor_user"
-DB_PASS="Y12Marcelo34#"
+DB_PASS="12Marcelo34#"
 DB_HOST="localhost"
 DB_PORT="3306"
 
