@@ -1,102 +1,97 @@
 #!/bin/bash
-# fix-npm-permanent.sh
+# YouTube Audio Extractor - Instalador Estável
+# Ubuntu 20.04 / 22.04
+# Node.js 18 LTS
 
 set -e
 
-echo "🔧 Instalando Node.js/npm de forma permanente..."
+echo "========================================="
+echo "🚀 Instalador YouTube Audio Extractor"
+echo "========================================="
 
-# 1. Remover tudo relacionado a Node.js
-echo "Removendo instalações antigas..."
-apt remove --purge nodejs npm -y 2>/dev/null || true
+# Garantir execução como root
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ Execute como root"
+  exit 1
+fi
+
+# Diretório do projeto
+PROJECT_DIR="/opt/youtube-audio-extractor"
+
+# ===============================
+# 1. Limpeza básica (segura)
+# ===============================
+echo "🧹 Limpando instalações antigas..."
+apt remove --purge -y nodejs npm || true
 apt autoremove -y
-
-# 2. Limpar completamente
-rm -rf /usr/local/bin/npm
-rm -rf /usr/local/bin/node
-rm -rf /usr/local/bin/npx
-rm -rf /usr/lib/node_modules/
-rm -rf /usr/local/lib/node_modules/
+rm -rf /usr/local/lib/node_modules
 rm -rf ~/.npm
-rm -rf ~/.nvm 2>/dev/null || true
 
-# 3. Atualizar sistema
-apt update
-apt upgrade -y
+# ===============================
+# 2. Dependências básicas
+# ===============================
+echo "📦 Instalando dependências..."
+apt update -y
+apt install -y curl git ca-certificates build-essential
 
-# 4. Instalar curl se não existir
-apt install -y curl wget
+# ===============================
+# 3. Instalar Node.js 18 LTS (FORMA CORRETA)
+# ===============================
+echo "🟢 Instalando Node.js 18 LTS..."
 
-# 5. Instalar Node.js 18.x via APT (mais estável)
-echo "Instalando Node.js 18.x..."
 curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-apt-get install -y nodejs
+apt install -y nodejs
 
-# 6. Verificar instalação
-echo "Verificando Node.js..."
-if ! command -v node &> /dev/null; then
-    echo "Node.js não instalado. Tentando método alternativo..."
-    
-    # Método alternativo: Instalar via pacote binário
-    cd /tmp
-    wget https://nodejs.org/dist/v18.17.0/node-v18.17.0-linux-x64.tar.xz
-    tar -xf node-v18.17.0-linux-x64.tar.xz
-    mv node-v18.17.0-linux-x64 /usr/local/lib/nodejs
-    ln -sf /usr/local/lib/nodejs/bin/node /usr/local/bin/node
-    ln -sf /usr/local/lib/nodejs/bin/npm /usr/local/bin/npm
-    ln -sf /usr/local/lib/nodejs/bin/npx /usr/local/bin/npx
-    rm -f node-v18.17.0-linux-x64.tar.xz
-    
-    # Adicionar ao PATH
-    echo 'export PATH=/usr/local/lib/nodejs/bin:$PATH' >> /etc/profile
-    source /etc/profile
+# ===============================
+# 4. Verificação REAL
+# ===============================
+echo "🔍 Verificando Node e npm..."
+
+NODE_PATH=$(which node || true)
+NPM_PATH=$(which npm || true)
+
+if [ -z "$NODE_PATH" ] || [ -z "$NPM_PATH" ]; then
+  echo "❌ Node.js ou npm não foram instalados corretamente"
+  exit 1
 fi
 
-# 7. Verificar npm
-echo "Verificando npm..."
-if ! command -v npm &> /dev/null; then
-    echo "npm não encontrado. Instalando separadamente..."
-    curl -L https://www.npmjs.com/install.sh | sh
-fi
+echo "✅ Node: $NODE_PATH ($(node -v))"
+echo "✅ npm: $NPM_PATH ($(npm -v))"
 
-# 8. Corrigir permissões
-echo "Corrigindo permissões..."
-mkdir -p /usr/local/lib/node_modules
-chmod -R 755 /usr/local/lib/node_modules
-mkdir -p ~/.npm
-chown -R $USER:$(id -gn $USER) ~/.npm
+# ===============================
+# 5. Clonar ou atualizar projeto
+# ===============================
+echo "📁 Instalando projeto..."
 
-# 9. Verificar instalação final
-echo ""
-echo "✅ Verificação final:"
-echo "Node.js: $(node --version 2>/dev/null || echo 'NÃO INSTALADO')"
-echo "npm: $(npm --version 2>/dev/null || echo 'NÃO INSTALADO')"
-echo "PATH: $PATH"
-echo "which node: $(which node 2>/dev/null || echo 'não encontrado')"
-echo "which npm: $(which npm 2>/dev/null || echo 'não encontrado')"
-
-# 10. Testar npm
-echo ""
-echo "🧪 Testando npm..."
-npm --version > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-    echo "✅ npm funcionando corretamente!"
+if [ ! -d "$PROJECT_DIR/.git" ]; then
+  git clone https://github.com/Marcelo1408/youtube-audio-extractor.git "$PROJECT_DIR"
 else
-    echo "❌ npm ainda não funciona. Tentando último recurso..."
-    
-    # Criar symlinks manuais
-    ln -sf $(which node) /usr/bin/node 2>/dev/null || true
-    ln -sf $(find /usr -name "npm" -type f 2>/dev/null | head -1) /usr/bin/npm 2>/dev/null || true
-    
-    # Verificar novamente
-    if command -v npm &> /dev/null; then
-        echo "✅ npm corrigido via symlink"
-    else
-        echo "❌ Falha crítica. Instale manualmente:"
-        echo "curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -"
-        echo "sudo apt-get install -y nodejs"
-        exit 1
-    fi
+  cd "$PROJECT_DIR"
+  git pull origin main
 fi
 
+cd "$PROJECT_DIR"
+
+# ===============================
+# 6. Instalar dependências do projeto
+# ===============================
+echo "📦 Instalando dependências npm..."
+npm install --production
+
+# ===============================
+# 7. Permissões
+# ===============================
+echo "🔐 Ajustando permissões..."
+chown -R root:root "$PROJECT_DIR"
+chmod -R 755 "$PROJECT_DIR"
+
+# ===============================
+# FINAL
+# ===============================
 echo ""
-echo "🎉 Node.js/npm instalados permanentemente!"
+echo "========================================="
+echo "🎉 INSTALAÇÃO CONCLUÍDA COM SUCESSO"
+echo "========================================="
+echo "📂 Projeto: $PROJECT_DIR"
+echo "🟢 Node: $(node -v)"
+echo "📦 npm: $(npm -v)"
