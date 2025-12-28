@@ -1,10 +1,27 @@
 -- schema.sql - 100% compatível com MariaDB/MySQL
--- Remove completamente CHARACTER SET e COLLATE problemáticos
+-- ATUALIZADO: Cria usuário e concede permissões
 
--- Criar banco de dados (forma mais compatível)
+-- ============================================
+-- 1. CRIAR BANCO DE DADOS
+-- ============================================
 CREATE DATABASE IF NOT EXISTS youtube_audio_extractor;
-
 USE youtube_audio_extractor;
+
+-- ============================================
+-- 2. CRIAR USUÁRIO ESPECÍFICO (do seu .env)
+-- ============================================
+-- Nota: Esta parte só funciona se executada com privilégios de root
+-- Remova se já tiver criado o usuário manualmente
+
+DROP USER IF EXISTS 'youtube_audio_extractor_user'@'localhost';
+CREATE USER 'youtube_audio_extractor_user'@'localhost' IDENTIFIED BY '12Marcelo34#';
+GRANT ALL PRIVILEGES ON youtube_audio_extractor.* TO 'youtube_audio_extractor_user'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE TEMPORARY TABLES ON youtube_audio_extractor.* TO 'youtube_audio_extractor_user'@'localhost';
+FLUSH PRIVILEGES;
+
+-- ============================================
+-- 3. TABELAS DO SISTEMA
+-- ============================================
 
 -- Tabela de usuários
 CREATE TABLE IF NOT EXISTS users (
@@ -99,8 +116,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX idx_expires ON sessions(expires);
 
+-- ============================================
+-- 4. DADOS INICIAIS
+-- ============================================
+
 -- Inserir configurações padrão
-INSERT INTO system_settings (setting_key, setting_value, description) VALUES
+INSERT IGNORE INTO system_settings (setting_key, setting_value, description) VALUES
 ('daily_limit_free', '5', 'Limite diário para usuários free'),
 ('daily_limit_premium', '50', 'Limite diário para usuários premium'),
 ('max_duration_free', '1800', 'Duração máxima para free (30min)'),
@@ -109,5 +130,29 @@ INSERT INTO system_settings (setting_key, setting_value, description) VALUES
 ('max_file_size', '104857600', 'Tamanho máximo de arquivo (100MB)');
 
 -- Usuário admin padrão (senha: admin123)
-INSERT INTO users (email, username, password_hash, role, email_verified) 
+-- Usando IGNORE para não dar erro se já existir
+INSERT IGNORE INTO users (email, username, password_hash, role, email_verified) 
 VALUES ('admin@example.com', 'Admin', '$2a$10$N9qo8uLOickgx2ZMRZoMye.CHx6p5p7Z1F6lB6JtHcQeJ7kTQQF7K', 'admin', TRUE);
+
+-- ============================================
+-- 5. CONFIGURAÇÕES ADICIONAIS
+-- ============================================
+
+-- Configuração para melhor performance
+SET GLOBAL innodb_buffer_pool_size = 134217728; -- 128MB para MariaDB
+SET GLOBAL max_connections = 100;
+SET GLOBAL connect_timeout = 60;
+
+-- ============================================
+-- 6. VERIFICAÇÃO FINAL
+-- ============================================
+SELECT '✅ Banco de dados criado com sucesso!' as Status;
+
+-- Verificar tabelas criadas
+SHOW TABLES;
+
+-- Verificar usuário criado
+SELECT user, host FROM mysql.user WHERE user = 'youtube_audio_extractor_user';
+
+-- Verificar permissões
+SHOW GRANTS FOR 'youtube_audio_extractor_user'@'localhost';
